@@ -95,7 +95,7 @@ set(SRC_FILES
 
 # keep everything in one library, the object files reference 
 # each other
-add_library(DorisGen STATIC ${SRC_FILES})
+add_library(DorisGen SHARED ${SRC_FILES})
 
 # Setting these files as code-generated lets make clean and incremental builds work
 # correctly

@@ -110,7 +110,7 @@ if (WITH_MYSQL)
         )
 endif()
 
-add_library(Util STATIC
+add_library(Util SHARED
     ${UTIL_FILES}
 )
 

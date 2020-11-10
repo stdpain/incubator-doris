@@ -115,6 +115,6 @@ if (WITH_LZO)
     )
 endif()
 
-add_library(Exec STATIC
+add_library(Exec SHARED
     ${EXEC_FILES}
 )

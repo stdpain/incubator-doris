@@ -41,7 +41,8 @@ if [[ ! -f ${DORIS_THIRDPARTY}/installed/lib/libs2.a ]]; then
     ${DORIS_THIRDPARTY}/build-thirdparty.sh
 fi
 
-PARALLEL=$[$(nproc)/4+1]
+#PARALLEL=$[$(nproc)/4+1]
+PARALLEL=$[$(nproc)]
 
 # Check args
 usage() {
@@ -162,7 +163,8 @@ cd ${DORIS_HOME}
 
 # Clean and build Backend
 if [ ${BUILD_BE} -eq 1 ] ; then
-    CMAKE_BUILD_TYPE=${BUILD_TYPE:-Release}
+    #CMAKE_BUILD_TYPE=${BUILD_TYPE:-Release}
+    CMAKE_BUILD_TYPE=${BUILD_TYPE:-Debug}
     echo "Build Backend: ${CMAKE_BUILD_TYPE}"
     CMAKE_BUILD_DIR=${DORIS_HOME}/be/build_${CMAKE_BUILD_TYPE}
     if [ ${CLEAN} -eq 1 ]; then
@@ -172,8 +174,10 @@ if [ ${BUILD_BE} -eq 1 ] ; then
     mkdir -p ${CMAKE_BUILD_DIR}
     cd ${CMAKE_BUILD_DIR}
     ${CMAKE_CMD} -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} -DMAKE_TEST=OFF -DWITH_MYSQL=${WITH_MYSQL} -DWITH_LZO=${WITH_LZO} ../
-    make -j${PARALLEL}
+    #make -j${PARALLEL} VERBOSE=1
+    make -j${PARALLEL} 
     make install
+    patchelf --set-rpath '$ORIGIN:/home/users/fenghaoan/opt/workspace/doris/baidu/bdg/doris/doris-toolchain/gcc730/lib64:/opt/compiler/gcc-4.8.2/lib64' $DORIS_HOME/output/be/lib/palo_be
     cd ${DORIS_HOME}
 fi
 

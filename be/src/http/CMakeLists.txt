@@ -21,7 +21,7 @@ set(LIBRARY_OUTPUT_PATH "${BUILD_DIR}/src/http")
 # where to put generated binaries
 set(EXECUTABLE_OUTPUT_PATH "${BUILD_DIR}/src/http")
 
-add_library(Webserver STATIC
+add_library(Webserver SHARED
   download_action.cpp
   http_headers.cpp
   http_method.cpp

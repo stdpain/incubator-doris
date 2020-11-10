@@ -117,6 +117,6 @@ if (WITH_MYSQL)
         )
 endif()
 
-add_library(Runtime STATIC
+add_library(Runtime SHARED
     ${RUNTIME_FILES}
     )
