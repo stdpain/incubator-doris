@@ -19,15 +19,16 @@
 
 #include <memory>
 
-#include "runtime/type_limit.h"
 #include "common/object_pool.h"
 #include "common/status.h"
 #include "exprs/binary_predicate.h"
+#include "exprs/bloomfilter_predicate.h"
 #include "exprs/expr_context.h"
 #include "exprs/hybrid_set.h"
 #include "exprs/in_predicate.h"
 #include "exprs/literal.h"
 #include "exprs/predicate.h"
+#include "runtime/type_limit.h"
 
 namespace doris {
 // only used in Runtime Filter
@@ -285,9 +286,14 @@ BinaryPredicate* create_bin_predicate(PrimitiveType prim_type, TExprOpcode::type
 // This class will help us build really pushdown expressions
 class RuntimePredicateWrapper {
 public:
-    RuntimePredicateWrapper(RuntimeState* state, ObjectPool* pool,
-                            RuntimeFilterType::type filter_type, ExprContext* expr_ctx)
-            : _state(state), _pool(pool), _filter_type(filter_type), _expr_ctx(expr_ctx) {
+    RuntimePredicateWrapper(RuntimeState* state, MemTracker* tracker, ObjectPool* pool,
+                            RuntimeFilterType::type filter_type, ExprContext* expr_ctx,
+                            int64_t hash_table_size)
+            : _state(state),
+              _tracker(tracker),
+              _pool(pool),
+              _filter_type(filter_type),
+              _expr_ctx(expr_ctx) {
         switch (filter_type) {
         case RuntimeFilterType::IN_FILTER: {
             _hybrid_set.reset(HybridSetBase::create_set(_expr_ctx->root()->type().type));
@@ -298,10 +304,19 @@ public:
                     MinMaxFuncBase::create_minmax_filter(_expr_ctx->root()->type().type));
             break;
         }
+        case RuntimeFilterType::BLOOM_FILTER: {
+            _bloomfilter_func.reset(BloomFilterFuncBase::create_bloom_filter(
+                    _tracker, _expr_ctx->root()->type().type));
+            if (!_bloomfilter_func->init(hash_table_size).ok()) {
+                _bloomfilter_func.reset();
+            }
+            break;
+        }
         default:
             break;
         }
     }
+
     void insert(void* data) {
         switch (_filter_type) {
         case RuntimeFilterType::IN_FILTER: {
@@ -310,6 +325,12 @@ public:
         }
         case RuntimeFilterType::MINMAX_FILTER: {
             _minmax_func->insert(data);
+            break;
+        }
+        case RuntimeFilterType::BLOOM_FILTER: {
+            if (_bloomfilter_func != nullptr) {
+                _bloomfilter_func->insert(data);
+            }
             break;
         }
         default:
@@ -354,6 +375,22 @@ public:
             container->push_back(_pool->add(new ExprContext(min_pred)));
             break;
         }
+        case RuntimeFilterType::BLOOM_FILTER: {
+            // create a bloom filter
+            TTypeDesc type_desc = create_type_desc(_expr_ctx->root()->type().type);
+            TExprNode node;
+            node.__set_type(type_desc);
+            node.__set_node_type(TExprNodeType::BLOOM_PRED);
+            node.__set_opcode(TExprOpcode::RT_FILTER);
+            node.__isset.vector_opcode = true;
+            node.__set_vector_opcode(to_in_opcode(expr_primitive_type));
+            auto bloom_pred = _pool->add(new BloomFilterPredicate(node));
+            RETURN_IF_ERROR(bloom_pred->prepare(_state, _bloomfilter_func.release()));
+            bloom_pred->add_child(Expr::copy(_pool, _expr_ctx->root()));
+            ExprContext* ctx = _pool->add(new ExprContext(bloom_pred));
+            container->push_back(ctx);
+            break;
+        }
         default:
             DCHECK(false);
             break;
@@ -363,24 +400,29 @@ public:
 
 private:
     RuntimeState* _state;
+    MemTracker* _tracker;
     ObjectPool* _pool;
     RuntimeFilterType::type _filter_type;
     std::unique_ptr<MinMaxFuncBase> _minmax_func;
     std::unique_ptr<HybridSetBase> _hybrid_set;
+    std::unique_ptr<BloomFilterFuncBase> _bloomfilter_func;
     ExprContext* _expr_ctx;
 };
 
-RuntimeFilter::RuntimeFilter(RuntimeState* state, ObjectPool* pool) : _state(state), _pool(pool) {}
+RuntimeFilter::RuntimeFilter(RuntimeState* state, MemTracker* expr_memory_tracker, ObjectPool* pool)
+        : _state(state), _expr_memory_tracker(expr_memory_tracker), _pool(pool) {}
 
 RuntimeFilter::~RuntimeFilter() {}
 
 Status RuntimeFilter::create_runtime_predicate(RuntimeFilterType::type filter_type,
-                                               size_t prob_index, ExprContext* prob_expr_ctx) {
+                                               size_t prob_index, ExprContext* prob_expr_ctx,
+                                               int64_t hash_table_size) {
     switch (filter_type) {
     case RuntimeFilterType::IN_FILTER:
-    case RuntimeFilterType::MINMAX_FILTER: {
-        _runtime_preds[prob_index].push_back(
-                _pool->add(new RuntimePredicateWrapper(_state, _pool, filter_type, prob_expr_ctx)));
+    case RuntimeFilterType::MINMAX_FILTER:
+    case RuntimeFilterType::BLOOM_FILTER: {
+        _runtime_preds[prob_index].push_back(_pool->add(new RuntimePredicateWrapper(
+                _state, _expr_memory_tracker, _pool, filter_type, prob_expr_ctx, hash_table_size)));
         break;
     }
     default:

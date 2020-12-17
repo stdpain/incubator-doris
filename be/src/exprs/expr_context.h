@@ -172,6 +172,7 @@ private:
     friend class ScalarFnCall;
     friend class InPredicate;
     friend class RuntimePredicateWrapper;
+    friend class BloomFilterPredicate;
     friend class OlapScanNode;
     friend class EsScanNode;
     friend class EsPredicate;

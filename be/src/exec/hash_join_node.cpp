@@ -273,15 +273,21 @@ Status HashJoinNode::open(RuntimeState* state) {
         _is_push_down = state->enable_runtime_filter_mode();
 
         // TODO: this is used for Code Check, Remove this later
-        if (_is_push_down || 0 != child(1)->conjunct_ctxs().size()) {
-            RuntimeFilter runtime_filter(state, _pool);
+        if (_is_push_down) {
+            RuntimeFilter runtime_filter(state, expr_mem_tracker().get(), _pool);
             for (int i = 0; i < _probe_expr_ctxs.size(); ++i) {
                 if (_hash_tbl->size() <= config::runtime_filter_max_in_num) {
                     runtime_filter.create_runtime_predicate(RuntimeFilterType::IN_FILTER, i,
-                                                            _probe_expr_ctxs[i]);
+                                                            _probe_expr_ctxs[i], _hash_tbl->size());
                 } else {
+                    // if left child is cross join node we could create a Bloom filter
+                    if (child(0)->type() == TPlanNodeType::CROSS_JOIN_NODE) {
+                        runtime_filter.create_runtime_predicate(RuntimeFilterType::BLOOM_FILTER, i,
+                                                                _probe_expr_ctxs[i],
+                                                                _hash_tbl->size());
+                    }
                     runtime_filter.create_runtime_predicate(RuntimeFilterType::MINMAX_FILTER, i,
-                                                            _probe_expr_ctxs[i]);
+                                                            _probe_expr_ctxs[i], _hash_tbl->size());
                 }
             }
 
@@ -304,9 +310,9 @@ Status HashJoinNode::open(RuntimeState* state) {
 
             SCOPED_TIMER(_push_down_timer);
             runtime_filter.get_push_expr_ctxs(&_push_down_expr_ctxs);
-            if (_push_down_expr_ctxs.size() > 0) {
+            //if (_push_down_expr_ctxs.size() > 0) {
                 push_down_predicate(state, &_push_down_expr_ctxs);
-            }
+            //}
         }
 
         // Open the probe-side child so that it may perform any initialisation in parallel.
