@@ -74,7 +74,7 @@ BloomFilterFuncBase* BloomFilterFuncBase::create_bloom_filter(MemTracker* tracke
 }
 
 BloomFilterPredicate::BloomFilterPredicate(const TExprNode& node)
-        : Predicate(node), _is_prepare(false) {}
+        : Predicate(node), _is_prepare(false), _filtered_rows(0), _scan_rows(1) {}
 
 BloomFilterPredicate::~BloomFilterPredicate() {}
 
@@ -97,12 +97,25 @@ std::string BloomFilterPredicate::debug_string() const {
 }
 
 BooleanVal BloomFilterPredicate::get_boolean_val(ExprContext* ctx, TupleRow* row) {
+    if (_always_true) {
+        return BooleanVal(true);
+    }
     void* lhs_slot = ctx->get_value(_children[0], row);
     if (lhs_slot == NULL) {
         return BooleanVal::null();
     }
+    _scan_rows++;
     if (_filter->find(lhs_slot)) {
         return BooleanVal(true);
+    }
+    _filtered_rows++;
+
+    if (!_has_calculate_filter && _scan_rows % _loop_size == 0) {
+        float rate = (float)_filtered_rows / _scan_rows;
+        if (rate < _expect_filter_rate) {
+            _always_true = true;
+        }
+        _has_calculate_filter = true;
     }
     return BooleanVal(false);
 }

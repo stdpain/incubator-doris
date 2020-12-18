@@ -281,11 +281,8 @@ Status HashJoinNode::open(RuntimeState* state) {
                                                             _probe_expr_ctxs[i], _hash_tbl->size());
                 } else {
                     // if left child is cross join node we could create a Bloom filter
-                    if (child(0)->type() == TPlanNodeType::CROSS_JOIN_NODE) {
-                        runtime_filter.create_runtime_predicate(RuntimeFilterType::BLOOM_FILTER, i,
-                                                                _probe_expr_ctxs[i],
-                                                                _hash_tbl->size());
-                    }
+                    runtime_filter.create_runtime_predicate(RuntimeFilterType::BLOOM_FILTER, i,
+                                                            _probe_expr_ctxs[i], _hash_tbl->size());
                     runtime_filter.create_runtime_predicate(RuntimeFilterType::MINMAX_FILTER, i,
                                                             _probe_expr_ctxs[i], _hash_tbl->size());
                 }
