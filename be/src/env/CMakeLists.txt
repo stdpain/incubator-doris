@@ -21,7 +21,7 @@ set(LIBRARY_OUTPUT_PATH "${BUILD_DIR}/src/env")
 # where to put generated binaries
 set(EXECUTABLE_OUTPUT_PATH "${BUILD_DIR}/src/env")
   
-add_library(Env STATIC
+add_library(Env SHARED
     env_posix.cpp
     env_util.cpp
 )

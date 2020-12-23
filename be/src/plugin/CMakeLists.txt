@@ -21,7 +21,7 @@ set(LIBRARY_OUTPUT_PATH "${BUILD_DIR}/src/plugin")
 # where to put generated binaries
 set(EXECUTABLE_OUTPUT_PATH "${BUILD_DIR}/src/plugin")
 
-add_library(Plugin STATIC
+add_library(Plugin SHARED
         plugin_loader.cpp
         plugin_mgr.cpp
         plugin_zip.cpp
