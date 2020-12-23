@@ -36,6 +36,7 @@ class MinMaxFuncBase {
 public:
     virtual void insert(void* data) = 0;
     virtual bool find(void* data) = 0;
+    virtual bool is_empty() = 0;
     virtual const void* get_max() = 0;
     virtual const void* get_min() = 0;
     static MinMaxFuncBase* create_minmax_filter(PrimitiveType type);
@@ -49,10 +50,15 @@ public:
     virtual void insert(void* data) {
         if (data == nullptr) return;
         T val_data = *reinterpret_cast<T*>(data);
+        if (_empty) {
+            _min = val_data;
+            _max = val_data;
+            _empty = false;
+            return;
+        }
         if (val_data < _min) {
             _min = val_data;
-        }
-        if (val_data > _max) {
+        } else if (val_data > _max) {
             _max = val_data;
         }
     }
@@ -64,6 +70,8 @@ public:
         return val_data >= _min && val_data <= _max;
     }
 
+    virtual bool is_empty() { return _empty; }
+
     virtual const void* get_max() { return &_max; }
 
     virtual const void* get_min() { return &_min; }
@@ -71,6 +79,8 @@ public:
 private:
     T _max = type_limit<T>::min();
     T _min = type_limit<T>::max();
+    // we use _empty to avoid compare twice
+    bool _empty = true;
 };
 
 MinMaxFuncBase* MinMaxFuncBase::create_minmax_filter(PrimitiveType type) {

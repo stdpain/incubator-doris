@@ -46,6 +46,9 @@ public:
         _bloom_filter.reset(bf.release());
         st = _bloom_filter->init(_bloom_filter_alloced,
                                  doris::segment_v2::HashStrategyPB::HASH_MURMUR3_X64_64);
+        if (st.ok()) {
+            _tracker->Consume(_bloom_filter_alloced);
+        }
         return st;
     }
     virtual void insert(void* data) = 0;

@@ -272,7 +272,6 @@ Status HashJoinNode::open(RuntimeState* state) {
 
         _is_push_down = state->enable_runtime_filter_mode();
 
-        // TODO: this is used for Code Check, Remove this later
         if (_is_push_down) {
             RuntimeFilter runtime_filter(state, expr_mem_tracker().get(), _pool);
             for (int i = 0; i < _probe_expr_ctxs.size(); ++i) {
@@ -280,7 +279,6 @@ Status HashJoinNode::open(RuntimeState* state) {
                     runtime_filter.create_runtime_predicate(RuntimeFilterType::IN_FILTER, i,
                                                             _probe_expr_ctxs[i], _hash_tbl->size());
                 } else {
-                    // if left child is cross join node we could create a Bloom filter
                     runtime_filter.create_runtime_predicate(RuntimeFilterType::BLOOM_FILTER, i,
                                                             _probe_expr_ctxs[i], _hash_tbl->size());
                     runtime_filter.create_runtime_predicate(RuntimeFilterType::MINMAX_FILTER, i,
