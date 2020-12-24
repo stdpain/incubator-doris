@@ -294,6 +294,8 @@ Status HashJoinNode::open(RuntimeState* state) {
                     TupleRow* row = iter.get_row();
 
                     for (int i = 0; i < _build_expr_ctxs.size(); ++i) {
+                        //TODO may be we could use the the result from hash table
+                        // to reduce caculate build_expr_ctxs
                         void* val = _build_expr_ctxs[i]->get_value(row);
                         runtime_filter.insert(i, val);
                     }
@@ -305,9 +307,7 @@ Status HashJoinNode::open(RuntimeState* state) {
 
             SCOPED_TIMER(_push_down_timer);
             runtime_filter.get_push_expr_ctxs(&_push_down_expr_ctxs);
-            //if (_push_down_expr_ctxs.size() > 0) {
-                push_down_predicate(state, &_push_down_expr_ctxs);
-            //}
+            push_down_predicate(state, &_push_down_expr_ctxs);
         }
 
         // Open the probe-side child so that it may perform any initialisation in parallel.

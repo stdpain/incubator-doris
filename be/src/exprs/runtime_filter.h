@@ -32,9 +32,7 @@ class RuntimeState;
 class RuntimePredicateWrapper;
 class MemTracker;
 
-struct RuntimeFilterType {
-    enum type { IN_FILTER = 0, MINMAX_FILTER = 1, BLOOM_FILTER = 2 };
-};
+enum class RuntimeFilterType { IN_FILTER = 0, MINMAX_FILTER = 1, BLOOM_FILTER = 2 };
 
 /// The runtimefilter is built in the join node.
 /// The main purpose is to reduce the scanning amount of the
@@ -43,11 +41,11 @@ struct RuntimeFilterType {
 /// that can be pushed down to node based on the results of the right table.
 class RuntimeFilter {
 public:
-    RuntimeFilter(RuntimeState* state, MemTracker* expr_memory_tracker, ObjectPool* pool);
+    RuntimeFilter(RuntimeState* state, MemTracker* mem_tracker, ObjectPool* pool);
     ~RuntimeFilter();
     // prob_index corresponds to the index of _probe_expr_ctxs in the join node
     // hash_table_size is the size of the hash_table
-    Status create_runtime_predicate(RuntimeFilterType::type filter_type, size_t prob_index,
+    Status create_runtime_predicate(RuntimeFilterType filter_type, size_t prob_index,
                                     ExprContext* prob_expr_ctx, int64_t hash_table_size);
 
     // We need to know the data corresponding to a prob_index when building an expression
@@ -59,7 +57,7 @@ private:
     // A mapping from prob_index to [runtime_predicate_warppers]
     std::map<int, std::list<RuntimePredicateWrapper*>> _runtime_preds;
     RuntimeState* _state;
-    MemTracker* _expr_memory_tracker;
+    MemTracker* _mem_tracker;
     ObjectPool* _pool;
 };
 } // namespace doris

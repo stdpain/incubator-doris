@@ -30,7 +30,7 @@ namespace doris {
 
 class BloomFilterFuncBase {
 public:
-    BloomFilterFuncBase(MemTracker* tracker) : _tracker(tracker){};
+    BloomFilterFuncBase(MemTracker* tracker) : _tracker(tracker) {};
     virtual ~BloomFilterFuncBase() { _tracker->Release(_bloom_filter_alloced); }
 
     virtual Status init(int64_t expect_num = 4096, double fpp = 0.05) {
@@ -38,17 +38,15 @@ public:
         // we need alloc 'optimal_bit_num(expect_num,fpp) / 8' bytes
         _bloom_filter_alloced =
                 doris::segment_v2::BloomFilter::optimal_bit_num(expect_num, fpp) / 8;
-        std::unique_ptr<doris::segment_v2::BloomFilter> bf;
         Status st = doris::segment_v2::BloomFilter::create(
-                doris::segment_v2::BloomFilterAlgorithmPB::BLOCK_BLOOM_FILTER, &bf);
-
+                doris::segment_v2::BloomFilterAlgorithmPB::BLOCK_BLOOM_FILTER, &_bloom_filter);
+        // status is always true if we use valid BloomFilterAlgorithmPB 
         DCHECK(st.ok());
-        _bloom_filter.reset(bf.release());
         st = _bloom_filter->init(_bloom_filter_alloced,
                                  doris::segment_v2::HashStrategyPB::HASH_MURMUR3_X64_64);
-        if (st.ok()) {
-            _tracker->Consume(_bloom_filter_alloced);
-        }
+        // status is always true if we use HASH_MURMUR3_X64_64
+        DCHECK(st.ok());
+        _tracker->Consume(_bloom_filter_alloced);
         return st;
     }
     virtual void insert(void* data) = 0;
@@ -58,7 +56,7 @@ public:
 protected:
     MemTracker* _tracker;
     int32_t _bloom_filter_alloced;
-    std::shared_ptr<doris::segment_v2::BloomFilter> _bloom_filter;
+    std::unique_ptr<doris::segment_v2::BloomFilter> _bloom_filter;
 };
 
 template <class T>
@@ -79,11 +77,12 @@ public:
     }
 };
 
-class StringValueBloomFilterFunc : public BloomFilterFuncBase {
+template <>
+class BloomFilterFunc<StringValue> : public BloomFilterFuncBase {
 public:
-    StringValueBloomFilterFunc(MemTracker* tracker) : BloomFilterFuncBase(tracker) {}
+    BloomFilterFunc(MemTracker* tracker) : BloomFilterFuncBase(tracker) {}
 
-    ~StringValueBloomFilterFunc() = default;
+    ~BloomFilterFunc() = default;
 
     virtual void insert(void* data) {
         DCHECK(_bloom_filter != nullptr);
@@ -119,6 +118,7 @@ private:
     bool _is_prepare;
     // if we set always = true, we will skip bloom filter
     bool _always_true;
+    //TODO statistic filter rate in the profile
     int64_t _filtered_rows;
     int64_t _scan_rows;
     std::shared_ptr<BloomFilterFuncBase> _filter;

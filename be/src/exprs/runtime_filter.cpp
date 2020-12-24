@@ -39,6 +39,7 @@ public:
     virtual bool is_empty() = 0;
     virtual const void* get_max() = 0;
     virtual const void* get_min() = 0;
+    // create min-max filter function
     static MinMaxFuncBase* create_minmax_filter(PrimitiveType type);
 };
 
@@ -297,7 +298,7 @@ BinaryPredicate* create_bin_predicate(PrimitiveType prim_type, TExprOpcode::type
 class RuntimePredicateWrapper {
 public:
     RuntimePredicateWrapper(RuntimeState* state, MemTracker* tracker, ObjectPool* pool,
-                            RuntimeFilterType::type filter_type, ExprContext* expr_ctx,
+                            RuntimeFilterType filter_type, ExprContext* expr_ctx,
                             int64_t hash_table_size)
             : _state(state),
               _tracker(tracker),
@@ -412,19 +413,19 @@ private:
     RuntimeState* _state;
     MemTracker* _tracker;
     ObjectPool* _pool;
-    RuntimeFilterType::type _filter_type;
+    RuntimeFilterType _filter_type;
     std::unique_ptr<MinMaxFuncBase> _minmax_func;
     std::unique_ptr<HybridSetBase> _hybrid_set;
     std::unique_ptr<BloomFilterFuncBase> _bloomfilter_func;
     ExprContext* _expr_ctx;
 };
 
-RuntimeFilter::RuntimeFilter(RuntimeState* state, MemTracker* expr_memory_tracker, ObjectPool* pool)
-        : _state(state), _expr_memory_tracker(expr_memory_tracker), _pool(pool) {}
+RuntimeFilter::RuntimeFilter(RuntimeState* state, MemTracker* mem_tracker, ObjectPool* pool)
+        : _state(state), _mem_tracker(mem_tracker), _pool(pool) {}
 
 RuntimeFilter::~RuntimeFilter() {}
 
-Status RuntimeFilter::create_runtime_predicate(RuntimeFilterType::type filter_type,
+Status RuntimeFilter::create_runtime_predicate(RuntimeFilterType filter_type,
                                                size_t prob_index, ExprContext* prob_expr_ctx,
                                                int64_t hash_table_size) {
     switch (filter_type) {
@@ -432,7 +433,7 @@ Status RuntimeFilter::create_runtime_predicate(RuntimeFilterType::type filter_ty
     case RuntimeFilterType::MINMAX_FILTER:
     case RuntimeFilterType::BLOOM_FILTER: {
         _runtime_preds[prob_index].push_back(_pool->add(new RuntimePredicateWrapper(
-                _state, _expr_memory_tracker, _pool, filter_type, prob_expr_ctx, hash_table_size)));
+                _state, _mem_tracker, _pool, filter_type, prob_expr_ctx, hash_table_size)));
         break;
     }
     default:
