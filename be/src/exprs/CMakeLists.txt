@@ -45,6 +45,8 @@ add_library(Exprs SHARED
   expr_context.cpp
   in_predicate.cpp
   new_in_predicate.cpp
+  bloomfilter_predicate.cpp
+  runtime_filter.cpp
   is_null_predicate.cpp
   like_predicate.cpp
   math_functions.cpp
@@ -65,4 +67,5 @@ add_library(Exprs SHARED
   new_agg_fn_evaluator.cc
   bitmap_function.cpp
   hll_function.cpp
-  grouping_sets_functions.cpp)
+  grouping_sets_functions.cpp
+  topn_function.cpp)

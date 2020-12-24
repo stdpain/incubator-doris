@@ -22,6 +22,7 @@
 
 #include "common/status.h"
 #include "exprs/expr_value.h"
+#include "runtime_filter.h"
 #include "udf/udf.h"
 #include "udf/udf_internal.h" // for ArrayVal
 
@@ -170,6 +171,8 @@ private:
     friend class Expr;
     friend class ScalarFnCall;
     friend class InPredicate;
+    friend class RuntimePredicateWrapper;
+    friend class BloomFilterPredicate;
     friend class OlapScanNode;
     friend class EsScanNode;
     friend class EsPredicate;

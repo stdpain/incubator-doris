@@ -18,6 +18,7 @@
 #include "olap/reader.h"
 
 #include <sstream>
+#include <unordered_set>
 
 #include "olap/collect_iterator.h"
 #include "olap/comparison_predicate.h"
@@ -711,7 +712,7 @@ ColumnPredicate* Reader::_parse_to_predicate(const TCondition& condition) {
     } else if (condition.condition_op == "*=" && condition.condition_values.size() > 1) {
         switch (column.type()) {
         case OLAP_FIELD_TYPE_TINYINT: {
-            std::set<int8_t> values;
+            std::unordered_set<int8_t> values;
             for (auto& cond_val : condition.condition_values) {
                 int32_t value = 0;
                 std::stringstream ss(cond_val);
@@ -722,7 +723,7 @@ ColumnPredicate* Reader::_parse_to_predicate(const TCondition& condition) {
             break;
         }
         case OLAP_FIELD_TYPE_SMALLINT: {
-            std::set<int16_t> values;
+            std::unordered_set<int16_t> values;
             for (auto& cond_val : condition.condition_values) {
                 int16_t value = 0;
                 std::stringstream ss(cond_val);
@@ -733,7 +734,7 @@ ColumnPredicate* Reader::_parse_to_predicate(const TCondition& condition) {
             break;
         }
         case OLAP_FIELD_TYPE_INT: {
-            std::set<int32_t> values;
+            std::unordered_set<int32_t> values;
             for (auto& cond_val : condition.condition_values) {
                 int32_t value = 0;
                 std::stringstream ss(cond_val);
@@ -744,7 +745,7 @@ ColumnPredicate* Reader::_parse_to_predicate(const TCondition& condition) {
             break;
         }
         case OLAP_FIELD_TYPE_BIGINT: {
-            std::set<int64_t> values;
+            std::unordered_set<int64_t> values;
             for (auto& cond_val : condition.condition_values) {
                 int64_t value = 0;
                 std::stringstream ss(cond_val);
@@ -755,7 +756,7 @@ ColumnPredicate* Reader::_parse_to_predicate(const TCondition& condition) {
             break;
         }
         case OLAP_FIELD_TYPE_LARGEINT: {
-            std::set<int128_t> values;
+            std::unordered_set<int128_t> values;
             for (auto& cond_val : condition.condition_values) {
                 int128_t value = 0;
                 std::stringstream ss(cond_val);
@@ -766,7 +767,7 @@ ColumnPredicate* Reader::_parse_to_predicate(const TCondition& condition) {
             break;
         }
         case OLAP_FIELD_TYPE_DECIMAL: {
-            std::set<decimal12_t> values;
+            std::unordered_set<decimal12_t> values;
             for (auto& cond_val : condition.condition_values) {
                 decimal12_t value;
                 value.from_string(cond_val);
@@ -776,7 +777,7 @@ ColumnPredicate* Reader::_parse_to_predicate(const TCondition& condition) {
             break;
         }
         case OLAP_FIELD_TYPE_CHAR: {
-            std::set<StringValue> values;
+            std::unordered_set<StringValue> values;
             for (auto& cond_val : condition.condition_values) {
                 StringValue value;
                 size_t length = std::max(static_cast<size_t>(column.length()), cond_val.length());
@@ -791,7 +792,7 @@ ColumnPredicate* Reader::_parse_to_predicate(const TCondition& condition) {
             break;
         }
         case OLAP_FIELD_TYPE_VARCHAR: {
-            std::set<StringValue> values;
+            std::unordered_set<StringValue> values;
             for (auto& cond_val : condition.condition_values) {
                 StringValue value;
                 int32_t length = cond_val.length();
@@ -805,7 +806,7 @@ ColumnPredicate* Reader::_parse_to_predicate(const TCondition& condition) {
             break;
         }
         case OLAP_FIELD_TYPE_DATE: {
-            std::set<uint24_t> values;
+            std::unordered_set<uint24_t> values;
             for (auto& cond_val : condition.condition_values) {
                 uint24_t value = timestamp_from_date(cond_val);
                 values.insert(value);
@@ -814,7 +815,7 @@ ColumnPredicate* Reader::_parse_to_predicate(const TCondition& condition) {
             break;
         }
         case OLAP_FIELD_TYPE_DATETIME: {
-            std::set<uint64_t> values;
+            std::unordered_set<uint64_t> values;
             for (auto& cond_val : condition.condition_values) {
                 uint64_t value = timestamp_from_datetime(cond_val);
                 values.insert(value);

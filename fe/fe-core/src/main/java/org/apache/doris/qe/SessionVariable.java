@@ -112,6 +112,8 @@ public class SessionVariable implements Serializable, Writable {
     // when true, the partition column must be set to NOT NULL.
     public static final String ALLOW_PARTITION_COLUMN_NULLABLE = "allow_partition_column_nullable";
 
+    public static final String ENABLE_RUNTIME_FILTER_MODE = "enable_runtime_filter_mode";
+
     // max memory used on every backend.
     @VariableMgr.VarAttr(name = EXEC_MEM_LIMIT)
     public long maxExecMemByte = 2147483648L;
@@ -279,6 +281,9 @@ public class SessionVariable implements Serializable, Writable {
 
     @VariableMgr.VarAttr(name = ALLOW_PARTITION_COLUMN_NULLABLE)
     private boolean allowPartitionColumnNullable = true;
+
+    @VariableMgr.VarAttr(name = ENABLE_RUNTIME_FILTER_MODE)
+    private boolean enableRuntimeFilterMode = true;
 
     public long getMaxExecMemByte() {
         return maxExecMemByte;
@@ -544,6 +549,14 @@ public class SessionVariable implements Serializable, Writable {
 
     public boolean isAllowPartitionColumnNullable() { return allowPartitionColumnNullable; }
 
+    public boolean enableRuntimeFilterMode() {
+        return enableRuntimeFilterMode;
+    }
+
+    public void setEnableRuntimeFilterMode(boolean enableRuntimeFilterMode) {
+        this.enableRuntimeFilterMode = enableRuntimeFilterMode;
+    }
+
 
     // Serialize to thrift object
     // used for rest api
@@ -572,6 +585,7 @@ public class SessionVariable implements Serializable, Writable {
             tResult.setMaxPushdownConditionsPerColumn(maxPushdownConditionsPerColumn);
         }
         tResult.setEnableSpilling(enableSpilling);
+        tResult.setEnableRuntimeFilterMode(enableRuntimeFilterMode);
         return tResult;
     }
 
