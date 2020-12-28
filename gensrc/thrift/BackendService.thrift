@@ -134,4 +134,5 @@ service BackendService {
     // release the context resource associated with the context_id
     DorisExternalService.TScanCloseResult close_scanner(1: DorisExternalService.TScanCloseParams params);
 
+    PaloInternalService.TCoordinatorResponse open_filter_merge_task(1: PaloInternalService.TCoordinatorRequest params);
 }

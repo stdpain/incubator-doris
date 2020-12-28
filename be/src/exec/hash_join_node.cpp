@@ -276,13 +276,19 @@ Status HashJoinNode::open(RuntimeState* state) {
             RuntimeFilter runtime_filter(state, expr_mem_tracker().get(), _pool);
             for (int i = 0; i < _probe_expr_ctxs.size(); ++i) {
                 if (_hash_tbl->size() <= config::runtime_filter_max_in_num) {
-                    runtime_filter.create_runtime_predicate(RuntimeFilterType::IN_FILTER, i,
-                                                            _probe_expr_ctxs[i], _hash_tbl->size());
+                    RuntimeFilterParams in_filter_params(RuntimeFilterType::IN_FILTER, i,
+                                                         _probe_expr_ctxs[i], _hash_tbl->size(), 0);
+                    runtime_filter.create_runtime_predicate(&in_filter_params);
                 } else {
-                    runtime_filter.create_runtime_predicate(RuntimeFilterType::BLOOM_FILTER, i,
-                                                            _probe_expr_ctxs[i], _hash_tbl->size());
-                    runtime_filter.create_runtime_predicate(RuntimeFilterType::MINMAX_FILTER, i,
-                                                            _probe_expr_ctxs[i], _hash_tbl->size());
+                    RuntimeFilterParams bloom_filter_params(RuntimeFilterType::BLOOM_FILTER, i,
+                                                            _probe_expr_ctxs[i], _hash_tbl->size(),
+                                                            0);
+                    runtime_filter.create_runtime_predicate(&bloom_filter_params);
+                    
+                    RuntimeFilterParams minmax_filter_params(RuntimeFilterType::MINMAX_FILTER, i,
+                                                             _probe_expr_ctxs[i], _hash_tbl->size(),
+                                                             0);
+                    runtime_filter.create_runtime_predicate(&minmax_filter_params);
                 }
             }
 

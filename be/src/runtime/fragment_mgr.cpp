@@ -96,6 +96,8 @@ public:
 
     TUniqueId fragment_instance_id() const { return _fragment_instance_id; }
 
+    TUniqueId query_id() const { return _query_id; }
+
     PlanFragmentExecutor* executor() { return &_executor; }
 
     const DateTimeValue& start_time() const { return _start_time; }
@@ -736,6 +738,25 @@ Status FragmentMgr::exec_external_plan_fragment(const TScanOpenParams& params,
     VLOG_ROW << "external exec_plan_fragment params is "
              << apache::thrift::ThriftDebugString(exec_fragment_params).c_str();
     return exec_plan_fragment(exec_fragment_params);
+}
+
+Status FragmentMgr::publish_filter(const PPublishFilterRequest* request, const char* data) {
+    UniqueId query_id = request->query_id();
+    std::shared_ptr<FragmentExecState> fragment_state;
+    {
+        std::lock_guard<std::mutex> lock(_lock);
+        for (auto kv : _fragment_map) {
+            if (query_id == kv.second->query_id()) {
+                fragment_state = kv.second;
+                break;
+            }
+        }
+    }
+    if (fragment_state == nullptr) {
+        return Status::InvalidArgument("unknown queryid");
+    }
+    RuntimeFilterMgr* runtime_filter_mgr = fragment_state->executor()->runtime_filter_mgr();
+    return runtime_filter_mgr->update_filter(request, data);
 }
 
 } // namespace doris

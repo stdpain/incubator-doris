@@ -1,6 +1,11 @@
 *.swp
 *.pyc
-be/output
+.gdb_history
+.cache/
+.clangd/
+be/build_LASN/
+be/build_LSAN/
+be/output/
 be/build
 be/build_Release
 be/ut_build
@@ -45,24 +50,18 @@ nohup.out
 be/cmake-build
 be/cmake-build-debug
 be/cmake-build-release
+be/build_Debug
+be/build_Release
+be/build_RELEASE
+be/ut_build_DEBUG
 be/.vscode
 be/src/gen_cpp/*.cc
 be/src/gen_cpp/*.cpp
 be/src/gen_cpp/*.h
 be/src/gen_cpp/opcode
-be/ut_build_*
+be/ut_build_ASAN/
 be/tags
-be/build*
-be/test/olap/test_data/tablet_meta_test.hdr
-build
-
-ui/dist
-ui/node_modules
-ui/package-lock.json
-docs/package-lock.json
-fe/fe-common/.classpath
-rpc_data/
-
 
 #ignore vscode project file
 .vscode
+fs_brokers/apache_hdfs_broker/src/main/thrift/org/apache/doris/thrift/

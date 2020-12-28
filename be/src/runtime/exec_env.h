@@ -63,6 +63,7 @@ class TExtDataSourceServiceClient;
 template <class T>
 class ClientCache;
 class HeartbeatFlags;
+class RuntimeFilterMgr;
 
 // Execution environment for queries/plan fragments.
 // Contains all required global structures, and handles to
@@ -140,6 +141,9 @@ public:
 
     PluginMgr* plugin_mgr() { return _plugin_mgr; }
 
+    // a global runtime filter mgr
+    RuntimeFilterMgr* runtime_filter_mgr() { return _runtime_filter_mgr; }
+
 private:
     Status _init(const std::vector<StorePath>& store_paths);
     void _destroy();
@@ -191,6 +195,8 @@ private:
     HeartbeatFlags* _heartbeat_flags = nullptr;
 
     PluginMgr* _plugin_mgr = nullptr;
+
+    RuntimeFilterMgr* _runtime_filter_mgr = nullptr;
 };
 
 template <>

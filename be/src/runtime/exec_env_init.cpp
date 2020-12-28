@@ -51,6 +51,7 @@
 #include "runtime/stream_load/stream_load_executor.h"
 #include "runtime/thread_resource_mgr.h"
 #include "runtime/tmp_file_mgr.h"
+#include "runtime/runtime_filter_mgr.h"
 #include "util/bfd_parser.h"
 #include "util/brpc_stub_cache.h"
 #include "util/debug_util.h"
@@ -106,6 +107,7 @@ Status ExecEnv::_init(const std::vector<StorePath>& store_paths) {
     _routine_load_task_executor = new RoutineLoadTaskExecutor(this);
     _small_file_mgr = new SmallFileMgr(this, config::small_file_dir);
     _plugin_mgr = new PluginMgr();
+    _runtime_filter_mgr = new RuntimeFilterMgr();
 
     _backend_client_cache->init_metrics("backend");
     _frontend_client_cache->init_metrics("frontend");

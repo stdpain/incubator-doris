@@ -242,6 +242,54 @@ message PProxyResult {
     optional PKafkaMetaProxyResult kafka_meta_result = 2;
 };
 
+message PBloomFilter {
+     optional bool always_true = 2;
+     optional int32 filter_length = 1;
+};
+
+message PColumnValue {
+    optional bool boolVal = 1;
+    optional int32 intVal = 2;
+    optional int64 longVal = 3;
+    optional double doubleVal = 4;
+    optional bytes stringVal = 5;
+}
+
+message PMinMaxFilter {
+    optional PColumnValue min_val = 1;
+    optional PColumnValue max_val = 2;
+};
+
+enum FilterType {
+    UNKNOW_FILTER = 0;
+    BLOOM_FILTER = 1;
+    MINMAX_FILTER = 2;
+};
+
+message PMergeFilterRequest {
+    required int32 filter = 1;
+    required PUniqueId query_id = 2;
+    required FilterType filter_type = 4;
+    optional PMinMaxFilter minmax_filter = 5;
+    optional PBloomFilter bloom_filter = 6;
+};
+
+message PMergeFilterResponse {
+    required PStatus status = 1;
+};
+
+message PPublishFilterRequest {
+    required int32 filter_id = 1;
+    required PUniqueId query_id = 2;
+    required FilterType filter_type = 4;
+    optional PMinMaxFilter minmax_filter = 5;
+    optional PBloomFilter bloom_filter = 6;
+};
+
+message PPublishFilterResponse {
+    required PStatus status = 1;
+};
+
 // NOTE(zc): If you want to add new method here,
 // you MUST add same method to palo_internal_service.proto
 service PBackendService {
@@ -257,5 +305,7 @@ service PBackendService {
     rpc update_cache(PUpdateCacheRequest) returns (PCacheResponse);
     rpc fetch_cache(PFetchCacheRequest) returns (PFetchCacheResult);
     rpc clear_cache(PClearCacheRequest) returns (PCacheResponse);
+    rpc merge_filter(PMergeFilterRequest) returns (PMergeFilterResponse);
+    rpc public_filter(PPublishFilterRequest) returns (PPublishFilterResponse);
 };
 

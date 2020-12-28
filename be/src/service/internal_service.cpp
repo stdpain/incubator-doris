@@ -236,6 +236,27 @@ void PInternalServiceImpl<T>::clear_cache(google::protobuf::RpcController* contr
     _exec_env->result_cache()->clear(request, response);
 }
 
+template <typename T>
+void PInternalServiceImpl<T>::merge_filter(::google::protobuf::RpcController* controller,
+                                           const ::doris::PMergeFilterRequest* request,
+                                           ::doris::PMergeFilterResponse* response,
+                                           ::google::protobuf::Closure* done) {
+    brpc::ClosureGuard closure_guard(done);
+    auto attachment = static_cast<brpc::Controller*>(controller)->request_attachment().to_string();
+}
+
+template <typename T>
+void PInternalServiceImpl<T>::public_filter(::google::protobuf::RpcController* controller,
+                                            const ::doris::PPublishFilterRequest* request,
+                                            ::doris::PPublishFilterResponse* response,
+                                            ::google::protobuf::Closure* done) {
+    brpc::ClosureGuard closure_guard(done);
+    auto attachment = static_cast<brpc::Controller*>(controller)->request_attachment();
+    UniqueId unique_id(request->query_id());
+    // will copy twice
+    _exec_env->fragment_mgr()->publish_filter(request, attachment.to_string().data());
+}
+
 template class PInternalServiceImpl<PBackendService>;
 template class PInternalServiceImpl<palo::PInternalService>;
 

@@ -37,6 +37,8 @@
 #include "runtime/result_buffer_mgr.h"
 #include "runtime/result_queue_mgr.h"
 #include "runtime/row_batch.h"
+#include "runtime/runtime_filter_mgr.h"
+#include "runtime_filter_mgr.h"
 #include "util/container_util.hpp"
 #include "util/cpu_info.h"
 #include "util/mem_info.h"
@@ -171,6 +173,8 @@ Status PlanFragmentExecutor::prepare(const TExecPlanFragmentParams& request,
         DCHECK_GT(num_senders, 0);
         static_cast<ExchangeNode*>(exch_node)->set_num_senders(num_senders);
     }
+
+    _local_filter_mgr.reset(new RuntimeFilterMgr(this));
 
     RETURN_IF_ERROR(_plan->prepare(_runtime_state.get()));
     // set scan ranges

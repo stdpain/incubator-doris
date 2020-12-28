@@ -312,4 +312,9 @@ void BackendService::close_scanner(TScanCloseResult& result_, const TScanClosePa
     result_.status = t_status;
 }
 
+void BackendService::open_filter_merge_task(TCoordinatorResponse& _return, const TCoordinatorRequest& params) {
+    
+}
+
+
 } // namespace doris

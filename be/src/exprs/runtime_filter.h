@@ -18,11 +18,14 @@
 #ifndef DORIS_BE_SRC_QUERY_EXPRS_RUNTIME_PREDICATE_H
 #define DORIS_BE_SRC_QUERY_EXPRS_RUNTIME_PREDICATE_H
 
+#include <condition_variable>
 #include <list>
 #include <map>
+#include <mutex>
 
 #include "gen_cpp/Exprs_types.h"
 #include "runtime/types.h"
+#include "util/uid_util.h"
 
 namespace doris {
 class Predicate;
@@ -31,8 +34,40 @@ class ExprContext;
 class RuntimeState;
 class RuntimePredicateWrapper;
 class MemTracker;
+class TupleRow;
+class PPublishFilterRequest;
+class TRuntimeFilterDesc;
 
-enum class RuntimeFilterType { IN_FILTER = 0, MINMAX_FILTER = 1, BLOOM_FILTER = 2 };
+enum class RuntimeFilterType {
+    UNKNOWN_FILTER = -1,
+    IN_FILTER = 0,
+    MINMAX_FILTER = 1,
+    BLOOM_FILTER = 2
+};
+
+struct RuntimeFilterParams {
+    RuntimeFilterParams()
+            : filter_type(RuntimeFilterType::UNKNOWN_FILTER),
+              prob_expr_index(0),
+              prob_expr_ctx(nullptr),
+              hash_table_size(-1),
+              bloom_filter_size(-1) {}
+    RuntimeFilterParams(RuntimeFilterType type, int prob_index, ExprContext* prob_ctx,
+                        int64_t table_size, int64_t filter_size)
+            : filter_type(type),
+              prob_expr_index(prob_index),
+              prob_expr_ctx(prob_ctx),
+              hash_table_size(table_size),
+              bloom_filter_size(filter_size) {}
+    RuntimeFilterType filter_type;
+    int prob_expr_index;
+    ExprContext* prob_expr_ctx;
+    // used in bloom filter
+    int64_t hash_table_size;
+    // used in bloom filter
+    // if bloom_filter_size is setted ,hash_table_size will be ignore
+    int64_t bloom_filter_size;
+};
 
 /// The runtimefilter is built in the join node.
 /// The main purpose is to reduce the scanning amount of the
@@ -45,8 +80,7 @@ public:
     ~RuntimeFilter();
     // prob_index corresponds to the index of _probe_expr_ctxs in the join node
     // hash_table_size is the size of the hash_table
-    Status create_runtime_predicate(RuntimeFilterType filter_type, size_t prob_index,
-                                    ExprContext* prob_expr_ctx, int64_t hash_table_size);
+    Status create_runtime_predicate(const RuntimeFilterParams* params);
 
     // We need to know the data corresponding to a prob_index when building an expression
     void insert(int prob_index, void* data);
@@ -60,6 +94,51 @@ private:
     MemTracker* _mem_tracker;
     ObjectPool* _pool;
 };
+
+struct UpdateRuntimeFilterParams {
+    const PPublishFilterRequest* publish_request;
+    const char* data;
+};
+
+class ShuffleRuntimeFilter {
+public:
+    ShuffleRuntimeFilter(RuntimeState* state, MemTracker* tracker, ObjectPool* pool);
+    ShuffleRuntimeFilter() : _is_ready(false) {};
+    ~ShuffleRuntimeFilter() = default;
+    bool is_ready() const { return _is_ready; }
+    // only used for producer
+    void insert(TupleRow* row);
+    // only used for consumer
+    // if filter is not ready for filter data scan_node
+    // will wait util it ready or timeout
+    bool await();
+    void signal();
+
+    bool is_producer() const { return _is_producer; }
+    bool is_consumer() const { return !_is_producer; }
+    Status update_filter(const UpdateRuntimeFilterParams* param);
+    Status merge_from(const ShuffleRuntimeFilter& shuffle_runtime_filter);
+
+    Status init_with_desc(const TRuntimeFilterDesc* desc);
+    Status apply_init_update_params(const UpdateRuntimeFilterParams*param);
+    RuntimeFilterType type() const { return _type; }
+
+private:
+    // used for await or signal
+    std::mutex _inner_mutex;
+    std::condition_variable _inner_cv;
+    bool _is_producer;
+    bool _is_ready;
+    RuntimeFilterType _type;
+    RuntimePredicateWrapper* _wrapper;
+
+    // will free by pool
+    const TRuntimeFilterDesc* _runtime_filter_desc;
+    RuntimeState* _state;
+    MemTracker* _mem_tracker;
+    ObjectPool* _pool;
+};
+
 } // namespace doris
 
 #endif

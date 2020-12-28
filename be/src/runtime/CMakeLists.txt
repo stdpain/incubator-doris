@@ -109,6 +109,7 @@ set(RUNTIME_FILES
     cache/result_node.cpp
     cache/result_cache.cpp
     odbc_table_sink.cpp	
+    runtime_filter_mgr.cpp
 )
 
 if (WITH_MYSQL)
