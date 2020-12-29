@@ -27,12 +27,13 @@
 #include "runtime/raw_value.h"
 
 namespace doris {
-
+/// only used in Runtime Filter
 class BloomFilterFuncBase {
 public:
     BloomFilterFuncBase(MemTracker* tracker) : _tracker(tracker) {};
     virtual ~BloomFilterFuncBase() { _tracker->Release(_bloom_filter_alloced); }
 
+    // init a bloom filter with expect element num
     virtual Status init(int64_t expect_num = 4096, double fpp = 0.05) {
         DCHECK(expect_num >= 0);
         // we need alloc 'optimal_bit_num(expect_num,fpp) / 8' bytes
@@ -51,10 +52,12 @@ public:
     }
     virtual void insert(void* data) = 0;
     virtual bool find(void* data) = 0;
+    /// create a bloom filter function
     static BloomFilterFuncBase* create_bloom_filter(MemTracker* tracker, PrimitiveType type);
 
 protected:
     MemTracker* _tracker;
+    // bloom filter size
     int32_t _bloom_filter_alloced;
     std::unique_ptr<doris::segment_v2::BloomFilter> _bloom_filter;
 };
@@ -118,9 +121,10 @@ private:
     bool _is_prepare;
     // if we set always = true, we will skip bloom filter
     bool _always_true;
-    //TODO statistic filter rate in the profile
+    /// TODO: statistic filter rate in the profile
     int64_t _filtered_rows;
     int64_t _scan_rows;
+    
     std::shared_ptr<BloomFilterFuncBase> _filter;
     bool _has_calculate_filter = false;
     // loop size must be power of 2

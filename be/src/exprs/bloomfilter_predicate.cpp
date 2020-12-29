@@ -64,7 +64,7 @@ BloomFilterFuncBase* BloomFilterFuncBase::create_bloom_filter(MemTracker* tracke
 
     case TYPE_CHAR:
     case TYPE_VARCHAR:
-        return new (std::nothrow) BloomFilterFunc<StringVal>(tracker);
+        return new (std::nothrow) BloomFilterFunc<StringValue>(tracker);
 
     default:
         return nullptr;
@@ -74,7 +74,11 @@ BloomFilterFuncBase* BloomFilterFuncBase::create_bloom_filter(MemTracker* tracke
 }
 
 BloomFilterPredicate::BloomFilterPredicate(const TExprNode& node)
-        : Predicate(node), _is_prepare(false), _filtered_rows(0), _scan_rows(0) {}
+        : Predicate(node),
+          _is_prepare(false),
+          _always_true(false),
+          _filtered_rows(0),
+          _scan_rows(0) {}
 
 BloomFilterPredicate::~BloomFilterPredicate() {}
 
