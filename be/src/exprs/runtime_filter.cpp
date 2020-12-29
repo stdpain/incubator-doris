@@ -145,6 +145,7 @@ MinMaxFuncBase* MinMaxFuncBase::create_minmax_filter(PrimitiveType type) {
     return NULL;
 }
 
+// PrimitiveType->TExprNodeType
 static TExprNodeType::type get_expr_node_type(PrimitiveType type) {
     switch (type) {
     case TYPE_BOOLEAN:

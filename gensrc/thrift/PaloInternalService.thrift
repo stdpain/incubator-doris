@@ -139,7 +139,7 @@ struct TQueryOptions {
   // whether enable spilling to disk
   31: optional bool enable_spilling = false;
 
-  32: optional bool enable_runtime_filter_mode = true;
+  32: optional bool enable_runtime_filter_mode = false;
 }
     
 
