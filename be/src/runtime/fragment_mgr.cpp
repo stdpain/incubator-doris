@@ -40,6 +40,7 @@
 #include "runtime/descriptors.h"
 #include "runtime/exec_env.h"
 #include "runtime/plan_fragment_executor.h"
+#include "runtime/runtime_filter_mgr.h"
 #include "service/backend_options.h"
 #include "util/debug_util.h"
 #include "util/doris_metrics.h"
@@ -458,6 +459,25 @@ Status FragmentMgr::exec_plan_fragment(const TExecPlanFragmentParams& params, Fi
         }
     }
 
+    {
+        std::lock_guard<std::mutex> guard(_controller_mutex);
+        std::string query_id_str = UniqueId(params.params.query_id).to_string();
+        auto iter = _filter_controller_map.find(query_id_str);
+        std::shared_ptr<RuntimeFilterMergeController> filter_merge_controller;
+        if (iter == _filter_controller_map.end()) {
+            std::shared_ptr<RuntimeFilterMergeController> controller(
+                    new RuntimeFilterMergeController());
+            _filter_controller_map[query_id_str] = controller;
+        }
+        filter_merge_controller = _filter_controller_map[query_id_str];
+        // params.fragment.plan.nodes
+
+        LOG(WARNING) << "query-id:" << query_id_str
+                     << " addr:" << (void*)filter_merge_controller.get();
+        RETURN_IF_ERROR(filter_merge_controller->init_from(params.fragment.plan.nodes));
+        filter_merge_controller->set_filter_params(params.params.runtime_filter_params);
+    }
+
     std::shared_ptr<FragmentExecState> exec_state;
     if (!params.__isset.is_simplified_param) {
         // This is an old version params, all @Common components is set in TExecPlanFragmentParams.
@@ -735,28 +755,54 @@ Status FragmentMgr::exec_external_plan_fragment(const TScanOpenParams& params,
     query_options.mem_limit = params.mem_limit;
     query_options.query_type = TQueryType::EXTERNAL;
     exec_fragment_params.__set_query_options(query_options);
-    VLOG_ROW << "external exec_plan_fragment params is "
-             << apache::thrift::ThriftDebugString(exec_fragment_params).c_str();
+    LOG(INFO) << "external exec_plan_fragment params is "
+              << apache::thrift::ThriftDebugString(exec_fragment_params).c_str();
     return exec_plan_fragment(exec_fragment_params);
 }
 
-Status FragmentMgr::publish_filter(const PPublishFilterRequest* request, const char* data) {
+Status FragmentMgr::apply_filter(const PPublishFilterRequest* request, const char* data) {
     UniqueId query_id = request->query_id();
-    std::shared_ptr<FragmentExecState> fragment_state;
+    bool handle = false;
     {
         std::lock_guard<std::mutex> lock(_lock);
+        LOG(WARNING) << "framemap_size:" << _fragment_map.size();
         for (auto kv : _fragment_map) {
             if (query_id == kv.second->query_id()) {
+                std::shared_ptr<FragmentExecState> fragment_state;
                 fragment_state = kv.second;
-                break;
+                RuntimeFilterMgr* runtime_filter_mgr =
+                        fragment_state->executor()->runtime_state()->runtime_filter_mgr();
+                Status st = runtime_filter_mgr->update_filter(request, data);
+                handle = true;
+                LOG(WARNING) << "apply filter state " << st.to_string();
             }
         }
     }
-    if (fragment_state == nullptr) {
+    if (!handle) {
+        LOG(WARNING) << "unknown.... queryid";
         return Status::InvalidArgument("unknown queryid");
     }
-    RuntimeFilterMgr* runtime_filter_mgr = fragment_state->executor()->runtime_filter_mgr();
-    return runtime_filter_mgr->update_filter(request, data);
+    return Status::OK();
+}
+
+Status FragmentMgr::merge_filter(const PMergeFilterRequest* request, const char* attach_data) {
+    UniqueId queryid = request->query_id();
+    std::shared_ptr<RuntimeFilterMergeController> filter_controller;
+    RETURN_IF_ERROR(get_merge_controller(&queryid, &filter_controller));
+    RETURN_IF_ERROR(filter_controller->merge(request, attach_data));
+    return Status::OK();
+}
+
+Status FragmentMgr::get_merge_controller(
+        const UniqueId* queryid, std::shared_ptr<RuntimeFilterMergeController>* filter_controller) {
+    std::lock_guard<std::mutex> guard(_controller_mutex);
+    LOG(WARNING) << __FUNCTION__ << "-queryid:" << queryid->to_string();
+    auto iter = _filter_controller_map.find(queryid->to_string());
+    if (iter == _filter_controller_map.end()) {
+        return Status::InvalidArgument("not found ...");
+    }
+    *filter_controller = iter->second;
+    return Status::OK();
 }
 
 } // namespace doris

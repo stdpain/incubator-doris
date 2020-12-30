@@ -22,7 +22,6 @@
 
 #include "common/status.h"
 #include "exprs/expr_value.h"
-#include "runtime_filter.h"
 #include "udf/udf.h"
 #include "udf/udf_internal.h" // for ArrayVal
 

@@ -57,6 +57,7 @@ class LoadErrorHub;
 class ReservationTracker;
 class InitialReservations;
 class RowDescriptor;
+class RuntimeFilterMgr;
 
 // A collection of items that are part of the global state of a
 // query and shared across all execution nodes of that query.
@@ -362,6 +363,8 @@ public:
     // if load mem limit is not set, or is zero, using query mem limit instead.
     int64_t get_load_mem_limit();
 
+    RuntimeFilterMgr* runtime_filter_mgr() { return _runtime_filter_mgr.get(); }
+
 private:
     // Allow TestEnv to set block_mgr manually for testing.
     friend class TestEnv;
@@ -394,6 +397,9 @@ private:
 
     DescriptorTbl* _desc_tbl;
     std::shared_ptr<ObjectPool> _obj_pool;
+
+    // runtime filter
+    std::unique_ptr<RuntimeFilterMgr> _runtime_filter_mgr;
 
     // Protects _data_stream_recvrs_pool
     boost::mutex _data_stream_recvrs_lock;

@@ -174,6 +174,8 @@ private:
     // This is only used for debugging and outputting the left child rows before
     // doing the join.
     std::string get_probe_row_output_string(TupleRow* probe_row);
+
+    std::vector<TRuntimeFilterDesc> _runtime_filter_descs;
 };
 
 } // namespace doris

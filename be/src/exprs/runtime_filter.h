@@ -36,7 +36,9 @@ class RuntimePredicateWrapper;
 class MemTracker;
 class TupleRow;
 class PPublishFilterRequest;
+class PMergeFilterRequest;
 class TRuntimeFilterDesc;
+class RowDescriptor;
 
 enum class RuntimeFilterType {
     UNKNOWN_FILTER = -1,
@@ -53,7 +55,7 @@ struct RuntimeFilterParams {
               hash_table_size(-1),
               bloom_filter_size(-1) {}
     RuntimeFilterParams(RuntimeFilterType type, int prob_index, ExprContext* prob_ctx,
-                        int64_t table_size, int64_t filter_size)
+                        int64_t table_size, int64_t filter_size = 0)
             : filter_type(type),
               prob_expr_index(prob_index),
               prob_expr_ctx(prob_ctx),
@@ -85,6 +87,8 @@ public:
     // We need to know the data corresponding to a prob_index when building an expression
     void insert(int prob_index, void* data);
 
+    // get pushdown expr_contexts
+    // get_push_expr_ctxs could only called once
     Status get_push_expr_ctxs(std::list<ExprContext*>* push_expr_ctxs);
 
 private:
@@ -100,11 +104,15 @@ struct UpdateRuntimeFilterParams {
     const char* data;
 };
 
+struct MergeRuntimeFilterParams {
+    const PMergeFilterRequest* merge_request;
+    const char* data;
+};
+
 class ShuffleRuntimeFilter {
 public:
     ShuffleRuntimeFilter(RuntimeState* state, MemTracker* tracker, ObjectPool* pool);
-    ShuffleRuntimeFilter() : _is_ready(false) {};
-    ~ShuffleRuntimeFilter() = default;
+    ~ShuffleRuntimeFilter();
     bool is_ready() const { return _is_ready; }
     // only used for producer
     void insert(TupleRow* row);
@@ -116,12 +124,38 @@ public:
 
     bool is_producer() const { return _is_producer; }
     bool is_consumer() const { return !_is_producer; }
+    void set_role(int role) { _is_producer = !role; }
     Status update_filter(const UpdateRuntimeFilterParams* param);
     Status merge_from(const ShuffleRuntimeFilter& shuffle_runtime_filter);
 
     Status init_with_desc(const TRuntimeFilterDesc* desc);
-    Status apply_init_update_params(const UpdateRuntimeFilterParams*param);
+    Status init_from_params(const MergeRuntimeFilterParams* param);
+    Status apply_init_update_params(const UpdateRuntimeFilterParams* param);
     RuntimeFilterType type() const { return _type; }
+
+    // Status get_push_expr_ctxs(std::list<ExprContext*>* push_expr_ctxs);
+    Status get_push_expr_ctxs(std::vector<ExprContext*>* push_expr_ctxs, const RowDescriptor& desc,
+                              const std::shared_ptr<MemTracker>& tracker);
+
+    Status init_producer();
+
+    Status serialize(PMergeFilterRequest* request, void** data, int* len);
+
+    Status get_data(void** data, int* len);
+
+    // producer should call
+    Status producer_prepare(const RowDescriptor& desc);
+
+    Status producer_close();
+
+    // consumer should call
+    Status consumer_close();
+
+    Status consumer_prepare(const RowDescriptor& desc);
+
+    Status push_to_remote(RuntimeState* state, const TNetworkAddress* addr);
+
+    Status join_rpc();
 
 private:
     // used for await or signal
@@ -131,12 +165,21 @@ private:
     bool _is_ready;
     RuntimeFilterType _type;
     RuntimePredicateWrapper* _wrapper;
+    UniqueId _query_id;
 
     // will free by pool
     const TRuntimeFilterDesc* _runtime_filter_desc;
     RuntimeState* _state;
     MemTracker* _mem_tracker;
     ObjectPool* _pool;
+
+    ExprContext* _prob_ctx;
+    ExprContext* _build_ctx;
+
+    ExprContext* _target_ctx = nullptr;
+
+    struct rpc_context;
+    std::shared_ptr<rpc_context> _rpc_context;
 };
 
 } // namespace doris

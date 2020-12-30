@@ -14,8 +14,9 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-
 #include "exec/hash_join_node.h"
+
+#include <thrift/protocol/TDebugProtocol.h>
 
 #include <sstream>
 
@@ -25,6 +26,7 @@
 #include "exprs/slot_ref.h"
 #include "gen_cpp/PlanNodes_types.h"
 #include "runtime/row_batch.h"
+#include "runtime/runtime_filter_mgr.h"
 #include "runtime/runtime_state.h"
 #include "util/runtime_profile.h"
 
@@ -44,6 +46,10 @@ HashJoinNode::HashJoinNode(ObjectPool* pool, const TPlanNode& tnode, const Descr
             (_join_op == TJoinOp::RIGHT_OUTER_JOIN || _join_op == TJoinOp::FULL_OUTER_JOIN);
     _is_push_down = tnode.hash_join_node.is_push_down;
     _build_unique = _join_op == TJoinOp::LEFT_ANTI_JOIN || _join_op == TJoinOp::LEFT_SEMI_JOIN;
+
+    _runtime_filter_descs = tnode.runtime_filters;
+    LOG(INFO) << "========================== build expr runtime.\n"
+              << apache::thrift::ThriftDebugString(_runtime_filter_descs[0]);
 }
 
 HashJoinNode::~HashJoinNode() {
@@ -61,6 +67,8 @@ Status HashJoinNode::init(const TPlanNode& tnode, RuntimeState* state) {
         RETURN_IF_ERROR(Expr::create_expr_tree(_pool, eq_join_conjuncts[i].left, &ctx));
         _probe_expr_ctxs.push_back(ctx);
         RETURN_IF_ERROR(Expr::create_expr_tree(_pool, eq_join_conjuncts[i].right, &ctx));
+        LOG(INFO) << "========================== build expr.\n"
+                  << apache::thrift::ThriftDebugString(eq_join_conjuncts[i].right);
         _build_expr_ctxs.push_back(ctx);
         if (eq_join_conjuncts[i].__isset.opcode &&
             eq_join_conjuncts[i].opcode == TExprOpcode::EQ_FOR_NULL) {
@@ -77,6 +85,10 @@ Status HashJoinNode::init(const TPlanNode& tnode, RuntimeState* state) {
         // If LEFT SEMI JOIN/LEFT ANTI JOIN with not equal predicate,
         // build table should not be deduplicated.
         _build_unique = false;
+    }
+
+    for (const auto& filter_desc : _runtime_filter_descs) {
+        RETURN_IF_ERROR(state->runtime_filter_mgr()->regist_filter(ROLE_PRODUCER, filter_desc));
     }
 
     return Status::OK();
@@ -240,9 +252,12 @@ Status HashJoinNode::open(RuntimeState* state) {
         thread_status.set_value(construct_hash_table(state));
     }
 
+    bool is_shuffle_join = false;
+
     if (_children[0]->type() == TPlanNodeType::EXCHANGE_NODE &&
         _children[1]->type() == TPlanNodeType::EXCHANGE_NODE) {
-        _is_push_down = false;
+        _is_push_down = true;
+        is_shuffle_join = true;
     }
 
     // The predicate could not be pushed down when there is Null-safe equal operator.
@@ -253,8 +268,52 @@ Status HashJoinNode::open(RuntimeState* state) {
         _is_null_safe_eq_join.end()) {
         _is_push_down = false;
     }
+    if (_is_push_down && is_shuffle_join) {
+        bool use_runtime_filter = state->enable_runtime_filter_mode();
+        RETURN_IF_ERROR(thread_status.get_future().get());
+        if (use_runtime_filter) {
+            std::vector<ShuffleRuntimeFilter*> shuffle_runtime_filter_list;
+            shuffle_runtime_filter_list.reserve(_runtime_filter_descs.size());
+            for (const auto& filter_desc : _runtime_filter_descs) {
+                ShuffleRuntimeFilter* shuffle_runtime_filter = nullptr;
+                state->runtime_filter_mgr()->get_producer_filter(filter_desc.filter_id,
+                                                                 &shuffle_runtime_filter);
+                if (shuffle_runtime_filter != nullptr) {
+                    shuffle_runtime_filter_list.push_back(shuffle_runtime_filter);
+                    RETURN_IF_ERROR(shuffle_runtime_filter->init_producer());
+                    RETURN_IF_ERROR(shuffle_runtime_filter->producer_prepare(child(1)->row_desc()));
+                }
+            }
+            {
+                SCOPED_TIMER(_push_compute_timer);
+                HashTable::Iterator iter = _hash_tbl->begin();
 
-    if (_is_push_down) {
+                while (iter.has_next()) {
+                    TupleRow* row = iter.get_row();
+                    for (auto filter : shuffle_runtime_filter_list) {
+                        filter->insert(row);
+                    }
+                    SCOPED_TIMER(_build_timer);
+                    iter.next<false>();
+                }
+            }
+
+            SCOPED_TIMER(_push_down_timer);
+            // publish filter
+            // BrpcStubCache brpc_service_stub;
+            for (auto filter : shuffle_runtime_filter_list) {
+                TNetworkAddress addr;
+                RETURN_IF_ERROR(state->runtime_filter_mgr()->get_merge_addr(&addr));
+                RETURN_IF_ERROR(filter->push_to_remote(state, &addr));
+            }
+            for (auto filter : shuffle_runtime_filter_list) {
+                filter->join_rpc();
+            }
+        }
+        Status open_status = child(0)->open(state);
+        RETURN_IF_ERROR(open_status);
+
+    } else if (_is_push_down && !is_shuffle_join) {
         // Blocks until ConstructHashTable has returned, after which
         // the hash table is fully constructed and we can start the probe
         // phase.
@@ -277,17 +336,16 @@ Status HashJoinNode::open(RuntimeState* state) {
             for (int i = 0; i < _probe_expr_ctxs.size(); ++i) {
                 if (_hash_tbl->size() <= config::runtime_filter_max_in_num) {
                     RuntimeFilterParams in_filter_params(RuntimeFilterType::IN_FILTER, i,
-                                                         _probe_expr_ctxs[i], _hash_tbl->size(), 0);
+                                                         _probe_expr_ctxs[i], _hash_tbl->size());
                     runtime_filter.create_runtime_predicate(&in_filter_params);
                 } else {
                     RuntimeFilterParams bloom_filter_params(RuntimeFilterType::BLOOM_FILTER, i,
-                                                            _probe_expr_ctxs[i], _hash_tbl->size(),
-                                                            0);
+                                                            _probe_expr_ctxs[i], _hash_tbl->size());
                     runtime_filter.create_runtime_predicate(&bloom_filter_params);
-                    
+
                     RuntimeFilterParams minmax_filter_params(RuntimeFilterType::MINMAX_FILTER, i,
-                                                             _probe_expr_ctxs[i], _hash_tbl->size(),
-                                                             0);
+                                                             _probe_expr_ctxs[i],
+                                                             _hash_tbl->size());
                     runtime_filter.create_runtime_predicate(&minmax_filter_params);
                 }
             }

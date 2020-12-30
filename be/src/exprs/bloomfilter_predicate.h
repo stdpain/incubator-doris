@@ -31,13 +31,13 @@ namespace doris {
 class BloomFilterFuncBase {
 public:
     BloomFilterFuncBase(MemTracker* tracker) : _tracker(tracker), _inited(false) {};
+
     virtual ~BloomFilterFuncBase() { _tracker->Release(_bloom_filter_alloced); }
 
     // init a bloom filter with expect element num
     virtual Status init(int64_t expect_num = 4096, double fpp = 0.05) {
         DCHECK(!_inited);
-        DCHECK(expect_num >= 0);
-        // we need alloc 'optimal_bit_num(expect_num,fpp) / 8' bytes
+        DCHECK(expect_num >= 0); // we need alloc 'optimal_bit_num(expect_num,fpp) / 8' bytes
         _bloom_filter_alloced =
                 doris::segment_v2::BloomFilter::optimal_bit_num(expect_num, fpp) / 8;
         Status st = doris::segment_v2::BloomFilter::create(
@@ -49,39 +49,58 @@ public:
                                  doris::segment_v2::HashStrategyPB::HASH_MURMUR3_X64_64);
         // status is always true if we use HASH_MURMUR3_X64_64
         DCHECK(st.ok());
-        RETURN_IF_ERROR(st);
         _tracker->Consume(_bloom_filter_alloced);
         _inited = true;
         return st;
     }
+
     virtual Status init_with_fixed_length(int64_t bloom_filter_length) {
         DCHECK(!_inited);
         DCHECK(bloom_filter_length >= 0);
         _bloom_filter_alloced = bloom_filter_length;
-        Status st = _bloom_filter->init(_bloom_filter_alloced,
-                                        doris::segment_v2::HashStrategyPB::HASH_MURMUR3_X64_64);
+        Status st = doris::segment_v2::BloomFilter::create(
+                doris::segment_v2::BloomFilterAlgorithmPB::BLOCK_BLOOM_FILTER, &_bloom_filter);
+        DCHECK(st.ok());
+        st = _bloom_filter->init(_bloom_filter_alloced,
+                                 doris::segment_v2::HashStrategyPB::HASH_MURMUR3_X64_64);
         DCHECK(st.ok());
         _tracker->Consume(_bloom_filter_alloced);
         _inited = true;
         return st;
     }
-    virtual void insert(void* data) { DCHECK(false); }
-    virtual bool find(void* data) {
-        DCHECK(false);
-        return true;
-    }
+
+    virtual void insert(void* data) = 0;
+
+    virtual bool find(void* data) = 0;
+
     Status merge(BloomFilterFuncBase* bloomfilter_func) {
+        DCHECK(_inited);
+        if (_bloom_filter == nullptr) {
+            RETURN_IF_ERROR(doris::segment_v2::BloomFilter::create(
+                    doris::segment_v2::BloomFilterAlgorithmPB::BLOCK_BLOOM_FILTER, &_bloom_filter));
+        }
         if (_bloom_filter_alloced != bloomfilter_func->_bloom_filter_alloced) {
+            LOG(WARNING) << "bloom filter size not the same";
             return Status::InvalidArgument("bloom filter size invalid");
         }
         return _bloom_filter->merge(bloomfilter_func->_bloom_filter.get());
     }
+
     Status assign(const char* data, int len) {
+        if (_bloom_filter == nullptr) {
+            RETURN_IF_ERROR(doris::segment_v2::BloomFilter::create(
+                    doris::segment_v2::BloomFilterAlgorithmPB::BLOCK_BLOOM_FILTER, &_bloom_filter));
+        }
+        _bloom_filter_alloced = len - 1;
+        _tracker->Consume(_bloom_filter_alloced);
         return _bloom_filter->init(data, len,
                                    doris::segment_v2::HashStrategyPB::HASH_MURMUR3_X64_64);
     }
     /// create a bloom filter function
+    /// tracker shouldn't be nullptr
     static BloomFilterFuncBase* create_bloom_filter(MemTracker* tracker, PrimitiveType type);
+
+    Status get_data(char** data, int* len);
 
 protected:
     MemTracker* _tracker;
@@ -138,7 +157,9 @@ public:
         return pool->add(new BloomFilterPredicate(*this));
     }
     Status prepare(RuntimeState* state, BloomFilterFuncBase* bloomfilterfunc);
+
     virtual BooleanVal get_boolean_val(ExprContext* context, TupleRow* row) override;
+    
     virtual Status open(RuntimeState* state, ExprContext* context,
                         FunctionContext::FunctionStateScope scope) override;
 
@@ -153,7 +174,7 @@ private:
     /// TODO: statistic filter rate in the profile
     int64_t _filtered_rows;
     int64_t _scan_rows;
-    
+
     std::shared_ptr<BloomFilterFuncBase> _filter;
     bool _has_calculate_filter = false;
     // loop size must be power of 2

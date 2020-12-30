@@ -140,9 +140,6 @@ public:
     // used for external service, close some context and release resource related with this context
     virtual void close_scanner(TScanCloseResult& result_, const TScanCloseParams& params);
 
-    // query-id target src
-    virtual void open_filter_merge_task(TCoordinatorResponse& _return, const TCoordinatorRequest& params);
-
 private:
     Status start_plan_fragment_execution(const TExecPlanFragmentParams& exec_params);
     ExecEnv* _exec_env;

@@ -25,6 +25,7 @@
 #include "runtime/string_value.hpp"
 
 namespace doris {
+int g_bloom_counter = 0;
 BloomFilterFuncBase* BloomFilterFuncBase::create_bloom_filter(MemTracker* tracker,
                                                               PrimitiveType type) {
     switch (type) {
@@ -73,6 +74,12 @@ BloomFilterFuncBase* BloomFilterFuncBase::create_bloom_filter(MemTracker* tracke
     return nullptr;
 }
 
+Status BloomFilterFuncBase::get_data(char** data, int* len) {
+    *data = _bloom_filter->data();
+    *len = _bloom_filter->size();
+    return Status::OK();
+}
+
 BloomFilterPredicate::BloomFilterPredicate(const TExprNode& node)
         : Predicate(node),
           _is_prepare(false),
@@ -83,6 +90,7 @@ BloomFilterPredicate::BloomFilterPredicate(const TExprNode& node)
 BloomFilterPredicate::~BloomFilterPredicate() {}
 
 Status BloomFilterPredicate::prepare(RuntimeState* state, BloomFilterFuncBase* filter) {
+    // DCHECK(filter != nullptr);
     if (_is_prepare) {
         return Status::OK();
     }

@@ -78,6 +78,8 @@ public:
 
     const std::string& scan_disk() const { return _tablet->data_dir()->path(); }
 
+    std::vector<bool>* mutable_filter_apply_marks() { return &_filter_apply_marks; }
+
 private:
     Status _init_params(const std::vector<OlapScanRange*>& key_ranges,
                         const std::vector<TCondition>& filters,
@@ -95,6 +97,7 @@ private:
     const std::vector<SlotDescriptor*>& _string_slots;
 
     std::vector<ExprContext*> _conjunct_ctxs;
+    std::vector<bool> _filter_apply_marks;
 
     int _id;
     bool _is_open;

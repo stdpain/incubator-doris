@@ -662,6 +662,20 @@ struct TAssertNumRowsNode {
     3: optional TAssertion assertion;
 }
 
+enum TRuntimeFilterType {
+  BLOOM = 0
+  MIN_MAX = 1
+}
+
+struct TRuntimeFilterDesc {
+  // filter id
+  1: required i32 filter_id
+  2: required Exprs.TExpr src_expr
+  3: required map<Types.TPlanNodeId, Exprs.TExpr> planid_to_target_expr
+  4: required TRuntimeFilterType type
+  5: optional i64 bloom_filter_size_bytes
+}
+
 // This is essentially a union of all messages corresponding to subclasses
 // of PlanNode.
 struct TPlanNode {
@@ -703,6 +717,8 @@ struct TPlanNode {
   33: optional TIntersectNode intersect_node
   34: optional TExceptNode except_node
   35: optional TOdbcScanNode odbc_scan_node
+
+  36: optional list<TRuntimeFilterDesc> runtime_filters
 }
 
 // A flattened representation of a tree of PlanNodes, obtained by depth-first

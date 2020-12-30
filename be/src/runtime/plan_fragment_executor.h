@@ -46,7 +46,6 @@ class TPlanExecRequest;
 class TPlanFragment;
 class TPlanFragmentExecParams;
 class TPlanExecParams;
-class RuntimeFilterMgr;
 
 // PlanFragmentExecutor handles all aspects of the execution of a single plan fragment,
 // including setup and tear-down, both in the success and error case.
@@ -146,8 +145,6 @@ public:
     void report_profile_once() { _stop_report_thread_cv.notify_one(); }
 
     void set_is_report_on_cancel(bool val) { _is_report_on_cancel = val; }
-
-    RuntimeFilterMgr* runtime_filter_mgr() { return _local_filter_mgr.get(); }
 
 private:
     ExecEnv* _exec_env; // not owned
@@ -265,10 +262,6 @@ private:
 
     void _collect_query_statistics();
 
-    // runtime filter mgr here
-    std::shared_ptr<RuntimeFilterMgr> _local_filter_mgr;
-
-    friend class RuntimeFilterMgr;
 };
 
 // Save the common components of fragments in a query.

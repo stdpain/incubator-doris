@@ -40,5 +40,5 @@ service PInternalService {
     rpc fetch_cache(doris.PFetchCacheRequest) returns (doris.PFetchCacheResult);
     rpc clear_cache(doris.PClearCacheRequest) returns (doris.PCacheResponse);
     rpc merge_filter(doris.PMergeFilterRequest) returns (doris.PMergeFilterResponse);
-    rpc public_filter(doris.PPublishFilterRequest) returns (doris.PPublishFilterResponse);
+    rpc apply_filter(doris.PPublishFilterRequest) returns (doris.PPublishFilterResponse);
 };

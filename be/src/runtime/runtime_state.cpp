@@ -35,6 +35,7 @@
 #include "runtime/initial_reservations.h"
 #include "runtime/load_path_mgr.h"
 #include "runtime/mem_tracker.h"
+#include "runtime/runtime_filter_mgr.h"
 #include "util/cpu_info.h"
 #include "util/disk_info.h"
 #include "util/file_utils.h"
@@ -92,6 +93,9 @@ RuntimeState::RuntimeState(const TPlanFragmentExecParams& fragment_exec_params,
           _error_log_file_path(""),
           _error_log_file(nullptr),
           _instance_buffer_reservation(new ReservationTracker) {
+              
+    _runtime_filter_mgr.reset(new RuntimeFilterMgr(_query_id, this));
+    _runtime_filter_mgr->set_runtime_filter_params(fragment_exec_params.runtime_filter_params);
     Status status =
             init(fragment_exec_params.fragment_instance_id, query_options, query_globals, exec_env);
     DCHECK(status.ok());
@@ -124,6 +128,7 @@ RuntimeState::RuntimeState(const TQueryGlobals& query_globals)
 }
 
 RuntimeState::~RuntimeState() {
+    _runtime_filter_mgr.reset(); // ??
     _block_mgr2.reset();
     // close error log file
     if (_error_log_file != nullptr && _error_log_file->is_open()) {
@@ -241,6 +246,8 @@ Status RuntimeState::init_mem_trackers(const TUniqueId& query_id) {
                                                        std::numeric_limits<int64_t>::max());
     }
 
+    // filter manager depends _instance_mem_tracker
+    _runtime_filter_mgr->init();
     return Status::OK();
 }
 

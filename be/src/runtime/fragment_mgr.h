@@ -47,7 +47,7 @@ class ThreadPool;
 class TExecPlanFragmentParams;
 class TExecPlanFragmentParamsList;
 class TUniqueId;
-class RuntimeFilterMgr;
+class RuntimeFilterMergeController;
 
 std::string to_load_error_http_path(const std::string& file_name);
 
@@ -84,7 +84,12 @@ public:
                                        const TUniqueId& fragment_instance_id,
                                        std::vector<TScanColumnDesc>* selected_columns);
 
-    Status publish_filter(const PPublishFilterRequest *request, const char* attach_data);
+    Status apply_filter(const PPublishFilterRequest* request, const char* attach_data);
+
+    Status merge_filter(const PMergeFilterRequest* request, const char* attach_data);
+
+    Status get_merge_controller(const UniqueId* queryid,
+                                std::shared_ptr<RuntimeFilterMergeController>* filter_controller);
 
 private:
     void _exec_actual(std::shared_ptr<FragmentExecState> exec_state, FinishCallback cb);
@@ -106,6 +111,9 @@ private:
 
     std::shared_ptr<MetricEntity> _entity = nullptr;
     UIntGauge* timeout_canceled_fragment_count = nullptr;
+
+    std::mutex _controller_mutex;
+    std::map<std::string, std::shared_ptr<RuntimeFilterMergeController>> _filter_controller_map;
 };
 
 } // namespace doris

@@ -242,19 +242,29 @@ void PInternalServiceImpl<T>::merge_filter(::google::protobuf::RpcController* co
                                            ::doris::PMergeFilterResponse* response,
                                            ::google::protobuf::Closure* done) {
     brpc::ClosureGuard closure_guard(done);
-    auto attachment = static_cast<brpc::Controller*>(controller)->request_attachment().to_string();
+    auto buf = static_cast<brpc::Controller*>(controller)->request_attachment();
+    Status st = _exec_env->fragment_mgr()->merge_filter(request, buf.to_string().data());
+    if (!st.ok()) {
+        LOG(WARNING) << "merge meet error" << st.to_string();
+    }
+    st.to_protobuf(response->mutable_status());
 }
 
 template <typename T>
-void PInternalServiceImpl<T>::public_filter(::google::protobuf::RpcController* controller,
-                                            const ::doris::PPublishFilterRequest* request,
-                                            ::doris::PPublishFilterResponse* response,
-                                            ::google::protobuf::Closure* done) {
+void PInternalServiceImpl<T>::apply_filter(::google::protobuf::RpcController* controller,
+                                           const ::doris::PPublishFilterRequest* request,
+                                           ::doris::PPublishFilterResponse* response,
+                                           ::google::protobuf::Closure* done) {
     brpc::ClosureGuard closure_guard(done);
     auto attachment = static_cast<brpc::Controller*>(controller)->request_attachment();
     UniqueId unique_id(request->query_id());
     // will copy twice
-    _exec_env->fragment_mgr()->publish_filter(request, attachment.to_string().data());
+    LOG(WARNING) << "rpc recv";
+    Status st = _exec_env->fragment_mgr()->apply_filter(request, attachment.to_string().data());
+    if (!st.ok()) {
+        LOG(WARNING) << "apply filter meet error" << st.to_string();
+    }
+    st.to_protobuf(response->mutable_status());
 }
 
 template class PInternalServiceImpl<PBackendService>;

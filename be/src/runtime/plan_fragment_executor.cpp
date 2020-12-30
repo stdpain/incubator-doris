@@ -174,8 +174,6 @@ Status PlanFragmentExecutor::prepare(const TExecPlanFragmentParams& request,
         static_cast<ExchangeNode*>(exch_node)->set_num_senders(num_senders);
     }
 
-    _local_filter_mgr.reset(new RuntimeFilterMgr(this));
-
     RETURN_IF_ERROR(_plan->prepare(_runtime_state.get()));
     // set scan ranges
     std::vector<ExecNode*> scan_nodes;

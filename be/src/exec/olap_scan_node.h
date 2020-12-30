@@ -164,6 +164,8 @@ protected:
     // Write debug string of this into out.
     virtual void debug_string(int indentation_level, std::stringstream* out) const;
 
+    const std::vector<TRuntimeFilterDesc>& runtime_filter_descs() {return _runtime_filter_descs;}
+
 private:
     void _init_counter(RuntimeState* state);
     // OLAP_SCAN_NODE profile layering: OLAP_SCAN_NODE, OlapScanner, and SegmentIterator
@@ -276,6 +278,8 @@ private:
     // it will set as BE's config `max_pushdown_conditions_per_column`,
     // or be overwritten by value in TQueryOptions
     int32_t _max_pushdown_conditions_per_column = 1024;
+
+    std::vector<TRuntimeFilterDesc> _runtime_filter_descs;
 
     std::unique_ptr<RuntimeProfile> _scanner_profile;
     std::unique_ptr<RuntimeProfile> _segment_profile;

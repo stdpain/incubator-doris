@@ -95,6 +95,7 @@ public:
         memcpy(_data, buf, size);
         _size = size;
         _num_bytes = _size - 1;
+        DCHECK((_num_bytes & (_num_bytes - 1)) == 0);
         _has_null = (bool*)(_data + _num_bytes);
         return Status::OK();
     }
@@ -139,7 +140,7 @@ public:
 
     Status merge(const BloomFilter* other) {
         DCHECK(other->size() == _size);
-        for (uint32_t i = 0; i <= other->size(); i++) {
+        for (uint32_t i = 0; i < other->size(); i++) {
             _data[i] |= other->_data[i];
         }
         return Status::OK();

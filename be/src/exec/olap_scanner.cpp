@@ -114,9 +114,7 @@ Status OlapScanner::prepare(const TPaloScanRange& scan_range,
 Status OlapScanner::open() {
     SCOPED_TIMER(_parent->_reader_init_timer);
 
-    if (_conjunct_ctxs.size() > _direct_conjunct_size) {
-        _use_pushdown_conjuncts = true;
-    }
+    _filter_apply_marks.resize(_parent->runtime_filter_descs().size(), false);
 
     auto res = _reader->init(_params);
     if (res != OLAP_SUCCESS) {
@@ -245,6 +243,9 @@ Status OlapScanner::_init_return_columns() {
 }
 
 Status OlapScanner::get_batch(RuntimeState* state, RowBatch* batch, bool* eof) {
+    if (_conjunct_ctxs.size() > _direct_conjunct_size) {
+        _use_pushdown_conjuncts = true;
+    }
     // 2. Allocate Row's Tuple buf
     uint8_t* tuple_buf =
             batch->tuple_data_pool()->allocate(state->batch_size() * _tuple_desc->byte_size());
