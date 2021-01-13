@@ -39,6 +39,7 @@ class PPublishFilterRequest;
 class PMergeFilterRequest;
 class TRuntimeFilterDesc;
 class RowDescriptor;
+class PMinMaxFilter;
 
 enum class RuntimeFilterType {
     UNKNOWN_FILTER = -1,
@@ -133,13 +134,14 @@ public:
     Status apply_init_update_params(const UpdateRuntimeFilterParams* param);
     RuntimeFilterType type() const { return _type; }
 
-    // Status get_push_expr_ctxs(std::list<ExprContext*>* push_expr_ctxs);
+    Status get_push_expr_ctxs(std::list<ExprContext*>* push_expr_ctxs);
     Status get_push_expr_ctxs(std::vector<ExprContext*>* push_expr_ctxs, const RowDescriptor& desc,
                               const std::shared_ptr<MemTracker>& tracker);
 
     Status init_producer();
 
     Status serialize(PMergeFilterRequest* request, void** data, int* len);
+    Status serialize(PPublishFilterRequest* request, void** data = nullptr, int* len = nullptr);
 
     Status get_data(void** data, int* len);
 
@@ -158,6 +160,9 @@ public:
     Status join_rpc();
 
 private:
+    void to_protobuf(PMinMaxFilter* filter);
+    template <class T>
+    Status _serialize(T* request, void** data, int* len);
     // used for await or signal
     std::mutex _inner_mutex;
     std::condition_variable _inner_cv;
@@ -168,7 +173,7 @@ private:
     UniqueId _query_id;
 
     // will free by pool
-    const TRuntimeFilterDesc* _runtime_filter_desc;
+    const TRuntimeFilterDesc* _runtime_filter_desc = nullptr;
     RuntimeState* _state;
     MemTracker* _mem_tracker;
     ObjectPool* _pool;
@@ -176,7 +181,7 @@ private:
     ExprContext* _prob_ctx;
     ExprContext* _build_ctx;
 
-    ExprContext* _target_ctx = nullptr;
+    std::vector<ExprContext*> _target_ctxs;
 
     struct rpc_context;
     std::shared_ptr<rpc_context> _rpc_context;

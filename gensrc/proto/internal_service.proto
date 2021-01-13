@@ -255,29 +255,37 @@ message PColumnValue {
     optional bytes stringVal = 5;
 }
 
+// TODO: CHECK ALL TYPE
+enum PColumnType {
+    COLUMN_TYPE_INT = 0;
+    COLUMN_TYPE_LONG = 1;
+    COLUMN_TYPE_BIGINT = 2;
+    COLUMN_TYPE_STRING = 3;
+    COLUMN_TYPE_DATE = 4;
+    COLUMN_TYPE_DATETIME = 5;
+    COLUMN_TYPE_DOUBLE = 6;
+    COLUMN_TYPE_FLOAT = 7;
+    COLUMN_TYPE_SMALL_INT = 8;
+    COLUMN_TYPE_DECIMAL = 9;
+    COLUMN_TYPE_DECIMALV2 = 10;
+}
+
 message PMinMaxFilter {
-    optional PColumnValue min_val = 1;
-    optional PColumnValue max_val = 2;
+    optional PColumnType column_type = 1;
+    optional PColumnValue min_val = 2;
+    optional PColumnValue max_val = 3;
 };
 
-message PRuntimeFilter {
-    enum FilterType {
-        UNKNOW_FILTER = 0;
-        BLOOM_FILTER = 1;
-        MINMAX_FILTER = 2;
-    };
+enum PFilterType {
+    UNKNOW_FILTER = 0;
+    BLOOM_FILTER = 1;
+    MINMAX_FILTER = 2;
 };
-
 
 message PMergeFilterRequest {
-    enum FilterType {
-        UNKNOW_FILTER = 0;
-        BLOOM_FILTER = 1;
-        MINMAX_FILTER = 2;
-    };
     required int32 filter_id = 1;
     required PUniqueId query_id = 2;
-    required FilterType filter_type = 4;
+    required PFilterType filter_type = 4;
     optional PMinMaxFilter minmax_filter = 5;
     optional PBloomFilter bloom_filter = 6;
 };
@@ -287,14 +295,9 @@ message PMergeFilterResponse {
 };
 
 message PPublishFilterRequest {
-    enum FilterType {
-        UNKNOW_FILTER = 0;
-        BLOOM_FILTER = 1;
-        MINMAX_FILTER = 2;
-    };
     required int32 filter_id = 1;
     required PUniqueId query_id = 2;
-    required FilterType filter_type = 4;
+    required PFilterType filter_type = 4;
     optional PMinMaxFilter minmax_filter = 5;
     optional PBloomFilter bloom_filter = 6;
 };

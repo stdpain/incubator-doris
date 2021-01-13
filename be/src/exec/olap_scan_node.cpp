@@ -196,10 +196,11 @@ Status OlapScanNode::open(RuntimeState* state) {
         if (shuffle_runtime_filter == nullptr) {
             continue;
         }
-        bool ready = shuffle_runtime_filter->is_ready();
-        if (!ready) {
-            ready = shuffle_runtime_filter->await();
-        }
+        
+        // bool ready = shuffle_runtime_filter->is_ready();
+        // if (!ready) {
+        //     ready = shuffle_runtime_filter->await();
+        // }
         // if (ready) {
         //     shuffle_runtime_filter->get_push_expr_ctxs(&expr_context);
         // }
@@ -1317,6 +1318,7 @@ void OlapScanNode::scanner_thread(OlapScanner* scanner) {
                                                             &shuffle_runtime_filter);
             DCHECK(shuffle_runtime_filter != nullptr);
             bool ready = shuffle_runtime_filter->is_ready();
+            // shuffle_runtime_filter->await();
             if (ready) {
                 shuffle_runtime_filter->get_push_expr_ctxs(&contexts, row_desc(),
                                                            _expr_mem_tracker);

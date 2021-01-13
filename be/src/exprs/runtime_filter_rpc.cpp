@@ -42,8 +42,19 @@ Status ShuffleRuntimeFilter::push_to_remote(RuntimeState* state, const TNetworkA
     _rpc_context = std::make_shared<ShuffleRuntimeFilter::rpc_context>();
     void* data = nullptr;
     int len = 0;
+
+    auto pquery_id = _rpc_context->request.mutable_query_id();
+    pquery_id->set_hi(_state->query_id().hi);
+    pquery_id->set_lo(_state->query_id().lo);
+
+    _rpc_context->request.set_filter_id(_runtime_filter_desc->filter_id);
+
     RETURN_IF_ERROR(serialize(&_rpc_context->request, &data, &len));
-    _rpc_context->cntl.request_attachment().append(data, len);
+    LOG(WARNING) << "Producer:" << _rpc_context->request.ShortDebugString();
+    if (len > 0) {
+        DCHECK(data != nullptr);
+        _rpc_context->cntl.request_attachment().append(data, len);
+    }
 
     stub->merge_filter(&_rpc_context->cntl, &_rpc_context->request, &_rpc_context->response,
                        brpc::DoNothing());

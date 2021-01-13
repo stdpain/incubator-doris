@@ -29,6 +29,7 @@ Status RuntimeFilterMgr::get_filter_by_role(const int filter_id, const int role,
     std::string key = std::to_string(filter_id);
     auto iter = _filter_map.find(key);
     if (iter == _filter_map.end()) {
+        LOG(WARNING) << "unknown filter...:" << key;
         return Status::InvalidArgument("unknown filter");
     }
     if (iter->second.role != role) {
@@ -137,19 +138,26 @@ Status RuntimeFilterMergeController::merge(const PMergeFilterRequest* request, c
                 continue;
             }
             PPublishFilterRequest apply_request;
-            apply_request.set_filter_id(request->filter_id());
-            apply_request.set_filter_type(PPublishFilterRequest_FilterType_BLOOM_FILTER);
-            *apply_request.mutable_query_id() = request->query_id();
-            auto bloom_filter = apply_request.mutable_bloom_filter();
             PPublishFilterResponse apply_response;
+            apply_request.set_filter_id(request->filter_id());
             PBackendService_Stub stub(&channel);
-            void* data = nullptr;
-            int len = 0;
-            iter->second.filter->get_data(&data, &len);
-            bloom_filter->set_filter_length(len);
-            bloom_filter->set_always_true(false);
-            cntl.request_attachment().append(data, len);
+            if (iter->second.filter->type() == RuntimeFilterType::BLOOM_FILTER) {
+                apply_request.set_filter_type(PFilterType::BLOOM_FILTER);
+                *apply_request.mutable_query_id() = request->query_id();
+                void* data = nullptr;
+                int len = 0;
+                iter->second.filter->get_data(&data, &len);
+                iter->second.filter->serialize(&apply_request, &data, &len);
+                cntl.request_attachment().append(data, len);
+            } else if (iter->second.filter->type() == RuntimeFilterType::MINMAX_FILTER) {
+                apply_request.set_filter_type(PFilterType::MINMAX_FILTER);
+                *apply_request.mutable_query_id() = request->query_id();
+                apply_request.mutable_minmax_filter()->set_column_type(
+                        PColumnType::COLUMN_TYPE_BIGINT);
+                iter->second.filter->serialize(&apply_request, nullptr, nullptr);
+            }
             stub.apply_filter(&cntl, &apply_request, &apply_response, nullptr);
+            LOG(WARNING) << "apply_request:" << apply_request.ShortDebugString();
             if (cntl.Failed()) {
                 LOG(WARNING) << "RPC apply_filter ERR:" << cntl.ErrorText();
             }

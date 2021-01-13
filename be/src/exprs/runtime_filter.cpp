@@ -41,8 +41,10 @@ public:
     virtual void insert(void* data) = 0;
     virtual bool find(void* data) = 0;
     virtual bool is_empty() = 0;
-    virtual const void* get_max() = 0;
-    virtual const void* get_min() = 0;
+    virtual void* get_max() = 0;
+    virtual void* get_min() = 0;
+    // assign minmax data
+    virtual Status assign(void* min_data, void* max_data) = 0;
     // merge from other minmax_func
     virtual Status merge(MinMaxFuncBase* minmax_func) = 0;
     // create min-max filter function
@@ -80,11 +82,10 @@ public:
 
     Status merge(MinMaxFuncBase* minmax_func) {
         MinMaxNumFunc<T>* other_minmax = static_cast<MinMaxNumFunc<T>*>(minmax_func);
-        // static_cast<MinMaxNumFunc<T>*>(minmax_func)->_min;
         if (other_minmax->_min < _min) {
             _min = other_minmax->_min;
         }
-        if (other_minmax->_max < _max) {
+        if (other_minmax->_max > _max) {
             _max = other_minmax->_max;
         }
         _empty = true;
@@ -93,9 +94,15 @@ public:
 
     virtual bool is_empty() { return _empty; }
 
-    virtual const void* get_max() { return &_max; }
+    virtual void* get_max() { return &_max; }
 
-    virtual const void* get_min() { return &_min; }
+    virtual void* get_min() { return &_min; }
+
+    virtual Status assign(void* min_data, void* max_data) {
+        _min = *(T*)min_data;
+        _max = *(T*)max_data;
+        return Status::OK();
+    }
 
 private:
     T _max = type_limit<T>::min();
@@ -191,6 +198,54 @@ static TExprNodeType::type get_expr_node_type(PrimitiveType type) {
         DCHECK(false) << "Invalid type.";
         return TExprNodeType::NULL_LITERAL;
     }
+}
+
+PColumnType to_proto(PrimitiveType type) {
+    switch (type) {
+    case TYPE_BOOLEAN:
+    case TYPE_TINYINT:
+    case TYPE_SMALLINT:
+    case TYPE_INT:
+        return PColumnType::COLUMN_TYPE_INT;
+    case TYPE_BIGINT:
+        return PColumnType::COLUMN_TYPE_LONG;
+
+    case TYPE_LARGEINT:
+        break;
+
+    case TYPE_NULL:
+
+    case TYPE_FLOAT:
+    case TYPE_DOUBLE:
+    case TYPE_TIME:
+
+    case TYPE_DECIMAL:
+    case TYPE_DECIMALV2:
+
+    case TYPE_DATETIME:
+
+    case TYPE_CHAR:
+    case TYPE_VARCHAR:
+    case TYPE_HLL:
+    case TYPE_OBJECT:
+
+    default:
+        DCHECK(false) << "Invalid type.";
+    }
+    DCHECK(false);
+    return PColumnType::COLUMN_TYPE_INT;
+}
+
+PrimitiveType to_primitive_type(PColumnType type) {
+    switch (type) {
+    case PColumnType::COLUMN_TYPE_INT:
+        return TYPE_INT;
+    case PColumnType::COLUMN_TYPE_LONG:
+        return TYPE_BIGINT;
+    default:
+        DCHECK(false);
+    }
+    return TYPE_INT;
 }
 
 static TTypeDesc create_type_desc(PrimitiveType type) {
@@ -328,10 +383,10 @@ public:
               _expr_ctx(params->prob_expr_ctx) {}
     // for a 'tmp' runtime predicate wrapper
     // only could called assign method or as a param for merge
-    RuntimePredicateWrapper(MemTracker* tracker, RuntimeFilterType type)
+    RuntimePredicateWrapper(MemTracker* tracker, ObjectPool* pool, RuntimeFilterType type)
             : _state(nullptr),
               _tracker(tracker),
-              _pool(nullptr),
+              _pool(pool),
               _filter_type(type),
               _expr_ctx(nullptr) {}
     // init runtimefilter wrapper
@@ -485,9 +540,44 @@ public:
         return _bloomfilter_func->assign(data, bloom_filter->filter_length());
     }
 
+    Status assign(const PMinMaxFilter* minmax_filter) {
+        DCHECK(_tracker != nullptr);
+        PrimitiveType type = to_primitive_type(minmax_filter->column_type());
+        _minmax_func.reset(MinMaxFuncBase::create_minmax_filter(type));
+        switch (type) {
+        case TYPE_INT: {
+            auto min_val = _pool->add(new int32_t);
+            auto max_val = _pool->add(new int32_t);
+            *min_val = minmax_filter->min_val().intval();
+            *max_val = minmax_filter->max_val().intval();
+            return _minmax_func->assign(min_val, max_val);
+        }
+        case TYPE_BIGINT: {
+            auto min_val = _pool->add(new int64);
+            auto max_val = _pool->add(new int64);
+            *min_val = minmax_filter->min_val().longval();
+            *max_val = minmax_filter->max_val().longval();
+            return _minmax_func->assign(min_val, max_val);
+        }
+        default:
+            break;
+        }
+        // get type from bloom filter
+        // return _minmax_func->assign()
+        return Status::InvalidArgument("not support!");
+    }
+
     Status get_bloom_filter_desc(char** data, int* filter_length) {
         return _bloomfilter_func->get_data(data, filter_length);
     }
+
+    Status get_minmax_filter_desc(void** min_data, void** max_data) {
+        *min_data = _minmax_func->get_min();
+        *max_data = _minmax_func->get_max();
+        return Status::OK();
+    }
+
+    PrimitiveType expr_primitive_type() { return _expr_ctx->root()->type().type; }
 
 private:
     RuntimeState* _state;
@@ -557,7 +647,7 @@ void ShuffleRuntimeFilter::insert(TupleRow* row) {
 
 bool ShuffleRuntimeFilter::await() {
     DCHECK(is_consumer());
-    int64_t wait_times_ms = 1000;
+    int64_t wait_times_ms = 100000;
     if (!_is_ready) {
         std::unique_lock<std::mutex> lock(_inner_mutex);
         return _inner_cv.wait_for(lock, std::chrono::milliseconds(wait_times_ms),
@@ -569,7 +659,7 @@ bool ShuffleRuntimeFilter::await() {
 void ShuffleRuntimeFilter::signal() {
     DCHECK(is_consumer());
     _is_ready = true;
-    _inner_cv.notify_one();
+    _inner_cv.notify_all();
 }
 
 Status ShuffleRuntimeFilter::merge_from(const ShuffleRuntimeFilter& shuffle_runtime_filter) {
@@ -618,38 +708,42 @@ Status ShuffleRuntimeFilter::init_with_desc(const TRuntimeFilterDesc* desc) {
 
 RuntimeFilterType get_type(int filter_type) {
     switch (filter_type) {
-    case PRuntimeFilter::BLOOM_FILTER: {
+    case PFilterType::BLOOM_FILTER: {
         return RuntimeFilterType::BLOOM_FILTER;
     }
-    case PRuntimeFilter::MINMAX_FILTER:
+    case PFilterType::MINMAX_FILTER:
+        return RuntimeFilterType::MINMAX_FILTER;
     default:
         return RuntimeFilterType::UNKNOWN_FILTER;
     }
 }
 
-PMergeFilterRequest_FilterType get_type(RuntimeFilterType type) {
+PFilterType get_type(RuntimeFilterType type) {
     switch (type) {
     case RuntimeFilterType::BLOOM_FILTER:
-        return PMergeFilterRequest::BLOOM_FILTER;
+        return PFilterType::BLOOM_FILTER;
     case RuntimeFilterType::MINMAX_FILTER:
-        return PMergeFilterRequest::MINMAX_FILTER;
+        return PFilterType::MINMAX_FILTER;
     default:
-        return PMergeFilterRequest::UNKNOW_FILTER;
+        return PFilterType::UNKNOW_FILTER;
     }
 }
 
 Status ShuffleRuntimeFilter::init_from_params(const MergeRuntimeFilterParams* param) {
     int filter_type = param->merge_request->filter_type();
-    _wrapper = _pool->add(new RuntimePredicateWrapper(_mem_tracker, get_type(filter_type)));
+    _wrapper = _pool->add(new RuntimePredicateWrapper(_mem_tracker, _pool, get_type(filter_type)));
 
     switch (filter_type) {
-    case PRuntimeFilter::BLOOM_FILTER: {
+    case PFilterType::BLOOM_FILTER: {
         _type = RuntimeFilterType::BLOOM_FILTER;
         DCHECK(param->merge_request->has_bloom_filter());
         return _wrapper->assign(&param->merge_request->bloom_filter(), param->data);
     }
-    case PRuntimeFilter::MINMAX_FILTER:
-        return Status::InvalidArgument("Unsupport min max filter");
+    case PFilterType::MINMAX_FILTER: {
+        _type = RuntimeFilterType::MINMAX_FILTER;
+        DCHECK(param->merge_request->has_minmax_filter());
+        return _wrapper->assign(&param->merge_request->minmax_filter());
+    }
     default:
         return Status::InvalidArgument("unknow filter type");
     }
@@ -658,15 +752,16 @@ Status ShuffleRuntimeFilter::init_from_params(const MergeRuntimeFilterParams* pa
 
 Status ShuffleRuntimeFilter::apply_init_update_params(const UpdateRuntimeFilterParams* param) {
     int filter_type = param->publish_request->filter_type();
-    _wrapper = _pool->add(new RuntimePredicateWrapper(_mem_tracker, get_type(filter_type)));
+    _wrapper = _pool->add(new RuntimePredicateWrapper(_mem_tracker, _pool, get_type(filter_type)));
 
     switch (filter_type) {
-    case PRuntimeFilter::BLOOM_FILTER: {
+    case PFilterType::BLOOM_FILTER: {
         DCHECK(param->publish_request->has_bloom_filter());
         return _wrapper->assign(&param->publish_request->bloom_filter(), param->data);
     }
-    case PRuntimeFilter::MINMAX_FILTER:
-        return Status::InvalidArgument("Unsupport min max filter");
+    case PFilterType::MINMAX_FILTER:
+        DCHECK(param->publish_request->has_minmax_filter());
+        return _wrapper->assign(&param->publish_request->minmax_filter());
     default:
         return Status::InvalidArgument("unknow filter type");
     }
@@ -681,16 +776,18 @@ Status ShuffleRuntimeFilter::init_producer() {
 }
 
 Status ShuffleRuntimeFilter::producer_prepare(const RowDescriptor& desc) {
-    std::vector<ExprContext*> ctxs = {_build_ctx};
-    RETURN_IF_ERROR(Expr::prepare(ctxs, _state, desc, _mem_tracker->shared_from_this()));
-    RETURN_IF_ERROR(Expr::open(ctxs, _state));
+    RETURN_IF_ERROR(_build_ctx->prepare(_state, desc, _mem_tracker->shared_from_this()));
+    RETURN_IF_ERROR(_build_ctx->open(_state));
     return Status::OK();
 }
 
 Status ShuffleRuntimeFilter::producer_close() {
-    std::vector<ExprContext*> ctxs = {_build_ctx};
-    Expr::close(ctxs, _state);
+    _build_ctx->close(_state);
     return Status::OK();
+}
+
+Status ShuffleRuntimeFilter::get_push_expr_ctxs(std::list<ExprContext*>* push_expr_ctxs) {
+    return _wrapper->get_push_context(push_expr_ctxs);
 }
 
 Status ShuffleRuntimeFilter::get_push_expr_ctxs(std::vector<ExprContext*>* push_expr_ctxs,
@@ -699,31 +796,101 @@ Status ShuffleRuntimeFilter::get_push_expr_ctxs(std::vector<ExprContext*>* push_
     DCHECK(_is_ready);
     DCHECK(is_consumer());
     std::lock_guard<std::mutex> guard(_inner_mutex);
-    if (_target_ctx != nullptr) {
-        push_expr_ctxs->push_back(_target_ctx);
+    if (!_target_ctxs.empty()) {
+        push_expr_ctxs->insert(push_expr_ctxs->end(), _target_ctxs.begin(), _target_ctxs.end());
         return Status::OK();
     }
-    RETURN_IF_ERROR(_wrapper->get_push_context(push_expr_ctxs));
-    _target_ctx = push_expr_ctxs->back();
-    _target_ctx->prepare(_state, desc, tracker);
-    _target_ctx->open(_state);
+    RETURN_IF_ERROR(_wrapper->get_push_context(&_target_ctxs));
+    Expr::prepare(_target_ctxs, _state, desc, tracker);
+    Expr::open(_target_ctxs, _state);
     return Status::OK();
 }
 
-Status ShuffleRuntimeFilter::serialize(PMergeFilterRequest* request, void** data, int* len) {
-    auto pquery_id = request->mutable_query_id();
-    pquery_id->set_hi(_state->query_id().hi);
-    pquery_id->set_lo(_state->query_id().lo);
-    request->set_filter_id(_runtime_filter_desc->filter_id);
+void ShuffleRuntimeFilter::to_protobuf(PMinMaxFilter* filter) {
+    switch (_wrapper->expr_primitive_type()) {
+    case TYPE_BOOLEAN: {
+        break;
+    }
+    case TYPE_TINYINT: {
+        break;
+    }
+    case TYPE_SMALLINT: {
+        break;
+    }
+    case TYPE_INT: {
+        filter->set_column_type(PColumnType::COLUMN_TYPE_INT);
+        void* min_data = nullptr;
+        void* max_data = nullptr;
+        _wrapper->get_minmax_filter_desc(&min_data, &max_data);
+        DCHECK(min_data != nullptr);
+        DCHECK(max_data != nullptr);
+        filter->mutable_min_val()->set_intval(*reinterpret_cast<const int32_t*>(min_data));
+        filter->mutable_max_val()->set_intval(*reinterpret_cast<const int32_t*>(max_data));
+        return;
+    }
+    case TYPE_BIGINT: {
+        filter->set_column_type(PColumnType::COLUMN_TYPE_BIGINT);
+        void* min_data = nullptr;
+        void* max_data = nullptr;
+        _wrapper->get_minmax_filter_desc(&min_data, &max_data);
+        DCHECK(min_data != nullptr);
+        DCHECK(max_data != nullptr);
+        filter->mutable_min_val()->set_longval(*reinterpret_cast<const int64_t*>(min_data));
+        filter->mutable_max_val()->set_longval(*reinterpret_cast<const int64_t*>(max_data));
+        return;
+    }
+    case TYPE_LARGEINT: {
+        break;
+    }
+    case TYPE_FLOAT: {
+        break;
+    }
+    case TYPE_DOUBLE: {
+        break;
+    }
+    case TYPE_DATE:
+    case TYPE_DATETIME: {
+        break;
+    }
+    case TYPE_DECIMAL: {
+        break;
+    }
+    case TYPE_DECIMALV2: {
+        break;
+    }
+    case TYPE_CHAR:
+    case TYPE_VARCHAR: {
+        break;
+    }
+    default: {
+        break;
+    }
+    }
+    DCHECK(false);
+}
+
+template <class T>
+Status ShuffleRuntimeFilter::_serialize(T* request, void** data, int* len) {
     request->set_filter_type(get_type(_type));
     if (_type == RuntimeFilterType::BLOOM_FILTER) {
         RETURN_IF_ERROR(_wrapper->get_bloom_filter_desc((char**)data, len));
         DCHECK(data != nullptr);
         request->mutable_bloom_filter()->set_filter_length(*len);
     } else if (_type == RuntimeFilterType::MINMAX_FILTER) {
+        auto minmax_filter = request->mutable_minmax_filter();
+        to_protobuf(minmax_filter);
+    } else {
         return Status::InvalidArgument("not implemented !");
     }
     return Status::OK();
+}
+
+Status ShuffleRuntimeFilter::serialize(PMergeFilterRequest* request, void** data, int* len) {
+    return _serialize(request, data, len);
+}
+
+Status ShuffleRuntimeFilter::serialize(PPublishFilterRequest* request, void** data, int* len) {
+    return _serialize(request, data, len);
 }
 
 Status ShuffleRuntimeFilter::get_data(void** data, int* len) {
@@ -742,10 +909,7 @@ Status ShuffleRuntimeFilter::consumer_prepare(const RowDescriptor& desc) {
 }
 
 Status ShuffleRuntimeFilter::consumer_close() {
-    if (_target_ctx != nullptr) {
-        std::vector<ExprContext*> contexts = {_target_ctx};
-        Expr::close(contexts, _state);
-    }
+    Expr::close(_target_ctxs, _state);
     return Status::OK();
 }
 

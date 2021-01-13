@@ -48,8 +48,6 @@ HashJoinNode::HashJoinNode(ObjectPool* pool, const TPlanNode& tnode, const Descr
     _build_unique = _join_op == TJoinOp::LEFT_ANTI_JOIN || _join_op == TJoinOp::LEFT_SEMI_JOIN;
 
     _runtime_filter_descs = tnode.runtime_filters;
-    LOG(INFO) << "========================== build expr runtime.\n"
-              << apache::thrift::ThriftDebugString(_runtime_filter_descs[0]);
 }
 
 HashJoinNode::~HashJoinNode() {
@@ -67,8 +65,6 @@ Status HashJoinNode::init(const TPlanNode& tnode, RuntimeState* state) {
         RETURN_IF_ERROR(Expr::create_expr_tree(_pool, eq_join_conjuncts[i].left, &ctx));
         _probe_expr_ctxs.push_back(ctx);
         RETURN_IF_ERROR(Expr::create_expr_tree(_pool, eq_join_conjuncts[i].right, &ctx));
-        LOG(INFO) << "========================== build expr.\n"
-                  << apache::thrift::ThriftDebugString(eq_join_conjuncts[i].right);
         _build_expr_ctxs.push_back(ctx);
         if (eq_join_conjuncts[i].__isset.opcode &&
             eq_join_conjuncts[i].opcode == TExprOpcode::EQ_FOR_NULL) {

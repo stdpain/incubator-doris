@@ -87,7 +87,17 @@ BloomFilterPredicate::BloomFilterPredicate(const TExprNode& node)
           _filtered_rows(0),
           _scan_rows(0) {}
 
-BloomFilterPredicate::~BloomFilterPredicate() {}
+BloomFilterPredicate::~BloomFilterPredicate() {
+    LOG(WARNING) << "bloom filter rows:" << _filtered_rows << ",scan_rows:" << _scan_rows
+                 << ",rate:" << (double)_filtered_rows / _scan_rows;
+}
+
+BloomFilterPredicate::BloomFilterPredicate(const BloomFilterPredicate& other)
+        : Predicate(other),
+          _is_prepare(other._is_prepare),
+          _always_true(other._always_true),
+          _filtered_rows(),
+          _scan_rows() {}
 
 Status BloomFilterPredicate::prepare(RuntimeState* state, BloomFilterFuncBase* filter) {
     // DCHECK(filter != nullptr);
@@ -123,7 +133,7 @@ BooleanVal BloomFilterPredicate::get_boolean_val(ExprContext* ctx, TupleRow* row
     _filtered_rows++;
 
     if (!_has_calculate_filter && _scan_rows % _loop_size == 0) {
-        float rate = (float)_filtered_rows / _scan_rows;
+        double rate = (double)_filtered_rows / _scan_rows;
         if (rate < _expect_filter_rate) {
             _always_true = true;
         }

@@ -153,6 +153,7 @@ class BloomFilterPredicate : public Predicate {
 public:
     virtual ~BloomFilterPredicate();
     BloomFilterPredicate(const TExprNode& node);
+    BloomFilterPredicate(const BloomFilterPredicate& other);
     virtual Expr* clone(ObjectPool* pool) const override {
         return pool->add(new BloomFilterPredicate(*this));
     }
@@ -172,15 +173,15 @@ private:
     // if we set always = true, we will skip bloom filter
     bool _always_true;
     /// TODO: statistic filter rate in the profile
-    int64_t _filtered_rows;
-    int64_t _scan_rows;
+    std::atomic<int64_t> _filtered_rows;
+    std::atomic<int64_t> _scan_rows;
 
     std::shared_ptr<BloomFilterFuncBase> _filter;
     bool _has_calculate_filter = false;
     // loop size must be power of 2
     constexpr static int64_t _loop_size = 8192;
     // if filter rate less than this, bloom filter will set always true
-    constexpr static float _expect_filter_rate = 0.2f;
+    constexpr static double _expect_filter_rate = 0.2;
 };
 } // namespace doris
 #endif
