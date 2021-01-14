@@ -196,16 +196,20 @@ Status OlapScanNode::open(RuntimeState* state) {
         if (shuffle_runtime_filter == nullptr) {
             continue;
         }
-        
-        // bool ready = shuffle_runtime_filter->is_ready();
-        // if (!ready) {
-        //     ready = shuffle_runtime_filter->await();
-        // }
-        // if (ready) {
-        //     shuffle_runtime_filter->get_push_expr_ctxs(&expr_context);
-        // }
+        if (state->enable_runtime_filter_mode()) {
+            bool ready = shuffle_runtime_filter->is_ready();
+            if (!ready) {
+                int64_t start_time = UnixMillis();
+                ready = shuffle_runtime_filter->await();
+                int64_t end_time = UnixMillis();
+                LOG(WARNING) << "wait-time:" << end_time - start_time << "ms";
+            }
+            if (ready) {
+                shuffle_runtime_filter->get_push_expr_ctxs(&expr_context);
+            }
+        }
     }
-    // push_down_predicate(state, &expr_context);
+    push_down_predicate(state, &expr_context);
 
     return Status::OK();
 }
@@ -1308,33 +1312,34 @@ void OlapScanNode::scanner_thread(OlapScanner* scanner) {
         scanner->set_opened();
     }
 
-    std::vector<ExprContext*> contexts;
-    auto& scanner_filter_apply_marks = *scanner->mutable_filter_apply_marks();
-    DCHECK(scanner_filter_apply_marks.size() == _runtime_filter_descs.size());
-    for (size_t i = 0; i < scanner_filter_apply_marks.size(); i++) {
-        if (!scanner_filter_apply_marks[i]) {
-            ShuffleRuntimeFilter* shuffle_runtime_filter = nullptr;
-            state->runtime_filter_mgr()->get_consume_filter(_runtime_filter_descs[i].filter_id,
-                                                            &shuffle_runtime_filter);
-            DCHECK(shuffle_runtime_filter != nullptr);
-            bool ready = shuffle_runtime_filter->is_ready();
-            // shuffle_runtime_filter->await();
-            if (ready) {
-                shuffle_runtime_filter->get_push_expr_ctxs(&contexts, row_desc(),
-                                                           _expr_mem_tracker);
-                scanner_filter_apply_marks[i] = true;
-            }
-        }
-    }
+    // std::vector<ExprContext*> contexts;
+    // auto& scanner_filter_apply_marks = *scanner->mutable_filter_apply_marks();
+    // DCHECK(scanner_filter_apply_marks.size() == _runtime_filter_descs.size());
+    // for (size_t i = 0; i < scanner_filter_apply_marks.size(); i++) {
+    //     if (!scanner_filter_apply_marks[i]) {
+    //         ShuffleRuntimeFilter* shuffle_runtime_filter = nullptr;
+    //         state->runtime_filter_mgr()->get_consume_filter(_runtime_filter_descs[i].filter_id,
+    //                                                         &shuffle_runtime_filter);
+    //         DCHECK(shuffle_runtime_filter != nullptr);
+    //         bool ready = shuffle_runtime_filter->is_ready();
+    //         // shuffle_runtime_filter->await();
+    //         if (ready) {
+    //             shuffle_runtime_filter->get_push_expr_ctxs(&contexts, row_desc(),
+    //                                                        _expr_mem_tracker);
+    //             scanner_filter_apply_marks[i] = true;
+    //         }
+    //     }
+    // }
 
-    if (!contexts.empty()) {
-        std::vector<ExprContext*> new_contexts;
-        auto& scanner_conjunct_ctxs = *scanner->conjunct_ctxs();
-        Expr::clone_if_not_exists(contexts, state, &new_contexts);
-        scanner_conjunct_ctxs.insert(scanner_conjunct_ctxs.end(), new_contexts.begin(),
-                                     new_contexts.end());
-    }
-    LOG(WARNING) << scanner->id() << ",scanner conjunct size:" << scanner->conjunct_ctxs()->size();
+    // if (!contexts.empty()) {
+    //     std::vector<ExprContext*> new_contexts;
+    //     auto& scanner_conjunct_ctxs = *scanner->conjunct_ctxs();
+    //     Expr::clone_if_not_exists(contexts, state, &new_contexts);
+    //     scanner_conjunct_ctxs.insert(scanner_conjunct_ctxs.end(), new_contexts.begin(),
+    //                                  new_contexts.end());
+    // }
+    LOG(WARNING) << "id:" << this->id() << ",scan-id:" << scanner->id()
+                 << ",scanner conjunct size:" << scanner->conjunct_ctxs()->size();
 
     // apply to cgroup
     if (_resource_info != nullptr) {
