@@ -78,7 +78,7 @@ public:
 
     const std::string& scan_disk() const { return _tablet->data_dir()->path(); }
 
-    std::vector<bool>* mutable_filter_apply_marks() { return &_filter_apply_marks; }
+    std::vector<bool>* mutable_runtime_filter_marks() { return &_runtime_filter_marks; }
 
 private:
     Status _init_params(const std::vector<OlapScanRange*>& key_ranges,
@@ -97,7 +97,8 @@ private:
     const std::vector<SlotDescriptor*>& _string_slots;
 
     std::vector<ExprContext*> _conjunct_ctxs;
-    std::vector<bool> _filter_apply_marks;
+    // to record which runtime filters have been used
+    std::vector<bool> _runtime_filter_marks;
 
     int _id;
     bool _is_open;

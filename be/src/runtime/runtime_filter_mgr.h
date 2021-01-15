@@ -108,8 +108,6 @@ public:
     RuntimeFilterMergeController() = default;
     ~RuntimeFilterMergeController() = default;
 
-    Status init_with_desc(const TRuntimeFilterDesc* runtime_filter_desc);
-
     Status init_from(std::vector<TPlanNode> nodes);
 
     Status merge(const PMergeFilterRequest* request, const char* data);
@@ -119,6 +117,8 @@ public:
     }
 
 private:
+    Status _init_with_desc(const TRuntimeFilterDesc* runtime_filter_desc);
+    
     struct RuntimeFilterCntlVal {
         int64_t create_time;
         const TRuntimeFilterDesc* runtime_filter_desc;

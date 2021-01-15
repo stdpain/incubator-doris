@@ -18,6 +18,7 @@
 
 #include <thrift/protocol/TDebugProtocol.h>
 
+#include <memory>
 #include <sstream>
 
 #include "exec/hash_table.hpp"
@@ -28,6 +29,7 @@
 #include "runtime/row_batch.h"
 #include "runtime/runtime_filter_mgr.h"
 #include "runtime/runtime_state.h"
+#include "util/defer_op.h"
 #include "util/runtime_profile.h"
 
 namespace doris {
@@ -192,11 +194,16 @@ Status HashJoinNode::construct_hash_table(RuntimeState* state) {
     RowBatch build_batch(child(1)->row_desc(), state->batch_size(), mem_tracker().get());
     RETURN_IF_ERROR(child(1)->open(state));
 
+    SCOPED_TIMER(_build_timer);
+    DeferOp defer([&]{
+        COUNTER_SET(_build_rows_counter, _hash_tbl->size());
+        COUNTER_SET(_build_buckets_counter, _hash_tbl->num_buckets());
+        COUNTER_SET(_hash_tbl_load_factor_counter, _hash_tbl->load_factor());
+    });
     while (true) {
         RETURN_IF_CANCELLED(state);
         bool eos = true;
         RETURN_IF_ERROR(child(1)->get_next(state, &build_batch, &eos));
-        SCOPED_TIMER(_build_timer);
         // take ownership of tuple data of build_batch
         _build_pool->acquire_data(build_batch.tuple_data_pool(), false);
         RETURN_IF_LIMIT_EXCEEDED(state, "Hash join, while constructing the hash table.");
@@ -210,9 +217,6 @@ Status HashJoinNode::construct_hash_table(RuntimeState* state) {
 
         VLOG_ROW << _hash_tbl->debug_string(true, &child(1)->row_desc());
 
-        COUNTER_SET(_build_rows_counter, _hash_tbl->size());
-        COUNTER_SET(_build_buckets_counter, _hash_tbl->num_buckets());
-        COUNTER_SET(_hash_tbl_load_factor_counter, _hash_tbl->load_factor());
         build_batch.reset();
 
         if (eos) {
@@ -221,6 +225,11 @@ Status HashJoinNode::construct_hash_table(RuntimeState* state) {
     }
 
     return Status::OK();
+}
+
+void HashJoinNode::handle_runtime_filter(bool is_shuffle, boost::promise<Status>& status) {
+    
+
 }
 
 Status HashJoinNode::open(RuntimeState* state) {
@@ -264,8 +273,9 @@ Status HashJoinNode::open(RuntimeState* state) {
         _is_null_safe_eq_join.end()) {
         _is_push_down = false;
     }
+
+    bool use_runtime_filter = state->enable_runtime_filter_mode();
     if (_is_push_down && is_shuffle_join) {
-        bool use_runtime_filter = state->enable_runtime_filter_mode();
         RETURN_IF_ERROR(thread_status.get_future().get());
         if (use_runtime_filter) {
             std::vector<ShuffleRuntimeFilter*> shuffle_runtime_filter_list;
@@ -276,7 +286,7 @@ Status HashJoinNode::open(RuntimeState* state) {
                                                                  &shuffle_runtime_filter);
                 if (shuffle_runtime_filter != nullptr) {
                     shuffle_runtime_filter_list.push_back(shuffle_runtime_filter);
-                    RETURN_IF_ERROR(shuffle_runtime_filter->init_producer());
+                    RETURN_IF_ERROR(shuffle_runtime_filter->producer_init());
                     RETURN_IF_ERROR(shuffle_runtime_filter->producer_prepare(child(1)->row_desc()));
                 }
             }
@@ -289,18 +299,20 @@ Status HashJoinNode::open(RuntimeState* state) {
                     for (auto filter : shuffle_runtime_filter_list) {
                         filter->insert(row);
                     }
-                    SCOPED_TIMER(_build_timer);
                     iter.next<false>();
                 }
             }
+            COUNTER_UPDATE(_build_timer, _push_compute_timer->value());
 
             SCOPED_TIMER(_push_down_timer);
             // publish filter
             // BrpcStubCache brpc_service_stub;
             for (auto filter : shuffle_runtime_filter_list) {
                 TNetworkAddress addr;
-                RETURN_IF_ERROR(state->runtime_filter_mgr()->get_merge_addr(&addr));
-                RETURN_IF_ERROR(filter->push_to_remote(state, &addr));
+                state->runtime_filter_mgr()->get_merge_addr(&addr);
+                // push_to_remote return was always true ... 
+                // because push_to_remote is a async rpc
+                filter->push_to_remote(state, &addr);
             }
             for (auto filter : shuffle_runtime_filter_list) {
                 filter->join_rpc();
@@ -360,10 +372,10 @@ Status HashJoinNode::open(RuntimeState* state) {
                         runtime_filter.insert(i, val);
                     }
 
-                    SCOPED_TIMER(_build_timer);
                     iter.next<false>();
                 }
             }
+            COUNTER_UPDATE(_build_timer, _push_compute_timer->value());
 
             SCOPED_TIMER(_push_down_timer);
             runtime_filter.get_push_expr_ctxs(&_push_down_expr_ctxs);
@@ -666,6 +678,10 @@ Status HashJoinNode::left_join_get_next(RuntimeState* state, RowBatch* out_batch
     *eos = _eos;
 
     ScopedTimer<MonotonicStopWatch> probe_timer(_probe_timer);
+    DeferOp defer([&] {
+        COUNTER_SET(_rows_returned_counter, _num_rows_returned);
+        COUNTER_UPDATE(_probe_rows_counter, _probe_batch->num_rows());
+    });
 
     while (!_eos) {
         // Compute max rows that should be added to out_batch
@@ -679,12 +695,10 @@ Status HashJoinNode::left_join_get_next(RuntimeState* state, RowBatch* out_batch
         if (_process_probe_batch_fn == NULL) {
             _num_rows_returned +=
                     process_probe_batch(out_batch, _probe_batch.get(), max_added_rows);
-            COUNTER_SET(_rows_returned_counter, _num_rows_returned);
         } else {
             // Use codegen'd function
             _num_rows_returned +=
                     _process_probe_batch_fn(this, out_batch, _probe_batch.get(), max_added_rows);
-            COUNTER_SET(_rows_returned_counter, _num_rows_returned);
         }
 
         if (reached_limit() || out_batch->is_full()) {
@@ -708,7 +722,6 @@ Status HashJoinNode::left_join_get_next(RuntimeState* state, RowBatch* out_batch
                 probe_timer.stop();
                 RETURN_IF_ERROR(child(0)->get_next(state, _probe_batch.get(), &_probe_eos));
                 probe_timer.start();
-                COUNTER_UPDATE(_probe_rows_counter, _probe_batch->num_rows());
             }
         }
     }

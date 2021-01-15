@@ -88,6 +88,7 @@ Status OlapScanNode::init(const TPlanNode& tnode, RuntimeState* state) {
     for (const auto& filter_desc : _runtime_filter_descs) {
         RETURN_IF_ERROR(state->runtime_filter_mgr()->regist_filter(ROLE_CONSUMER, filter_desc));
     }
+    _runtime_filter_pushed_marks.resize(_runtime_filter_descs.size(), false);
 
     return Status::OK();
 }
@@ -189,7 +190,8 @@ Status OlapScanNode::open(RuntimeState* state) {
     _resource_info = ResourceTls::get_resource_tls();
 
     std::list<ExprContext*> expr_context;
-    for (auto& filter_desc : _runtime_filter_descs) {
+    for (size_t i = 0; i < _runtime_filter_descs.size(); ++i) {
+        auto& filter_desc = _runtime_filter_descs[i];
         ShuffleRuntimeFilter* shuffle_runtime_filter = nullptr;
         state->runtime_filter_mgr()->get_consume_filter(filter_desc.filter_id,
                                                         &shuffle_runtime_filter);
@@ -202,10 +204,11 @@ Status OlapScanNode::open(RuntimeState* state) {
                 int64_t start_time = UnixMillis();
                 ready = shuffle_runtime_filter->await();
                 int64_t end_time = UnixMillis();
-                LOG(WARNING) << "wait-time:" << end_time - start_time << "ms";
+                LOG(INFO) << "runtime filter wait time:" << end_time - start_time << "ms";
             }
             if (ready) {
-                shuffle_runtime_filter->get_push_expr_ctxs(&expr_context);
+                RETURN_IF_ERROR(shuffle_runtime_filter->get_push_expr_ctxs(&expr_context));
+                _runtime_filter_pushed_marks[i] = true;
             }
         }
     }
@@ -1312,34 +1315,32 @@ void OlapScanNode::scanner_thread(OlapScanner* scanner) {
         scanner->set_opened();
     }
 
-    // std::vector<ExprContext*> contexts;
-    // auto& scanner_filter_apply_marks = *scanner->mutable_filter_apply_marks();
-    // DCHECK(scanner_filter_apply_marks.size() == _runtime_filter_descs.size());
-    // for (size_t i = 0; i < scanner_filter_apply_marks.size(); i++) {
-    //     if (!scanner_filter_apply_marks[i]) {
-    //         ShuffleRuntimeFilter* shuffle_runtime_filter = nullptr;
-    //         state->runtime_filter_mgr()->get_consume_filter(_runtime_filter_descs[i].filter_id,
-    //                                                         &shuffle_runtime_filter);
-    //         DCHECK(shuffle_runtime_filter != nullptr);
-    //         bool ready = shuffle_runtime_filter->is_ready();
-    //         // shuffle_runtime_filter->await();
-    //         if (ready) {
-    //             shuffle_runtime_filter->get_push_expr_ctxs(&contexts, row_desc(),
-    //                                                        _expr_mem_tracker);
-    //             scanner_filter_apply_marks[i] = true;
-    //         }
-    //     }
-    // }
+    std::vector<ExprContext*> contexts;
+    auto& scanner_filter_apply_marks = *scanner->mutable_runtime_filter_marks();
+    DCHECK(scanner_filter_apply_marks.size() == _runtime_filter_descs.size());
+    for (size_t i = 0; i < scanner_filter_apply_marks.size(); i++) {
+        if (!scanner_filter_apply_marks[i] && !_runtime_filter_pushed_marks[i]) {
+            ShuffleRuntimeFilter* shuffle_runtime_filter = nullptr;
+            state->runtime_filter_mgr()->get_consume_filter(_runtime_filter_descs[i].filter_id,
+                                                            &shuffle_runtime_filter);
+            DCHECK(shuffle_runtime_filter != nullptr);
+            bool ready = shuffle_runtime_filter->is_ready();
+            // shuffle_runtime_filter->await();
+            if (ready) {
+                shuffle_runtime_filter->get_push_expr_ctxs(&contexts, row_desc(),
+                                                           _expr_mem_tracker);
+                scanner_filter_apply_marks[i] = true;
+            }
+        }
+    }
 
-    // if (!contexts.empty()) {
-    //     std::vector<ExprContext*> new_contexts;
-    //     auto& scanner_conjunct_ctxs = *scanner->conjunct_ctxs();
-    //     Expr::clone_if_not_exists(contexts, state, &new_contexts);
-    //     scanner_conjunct_ctxs.insert(scanner_conjunct_ctxs.end(), new_contexts.begin(),
-    //                                  new_contexts.end());
-    // }
-    LOG(WARNING) << "id:" << this->id() << ",scan-id:" << scanner->id()
-                 << ",scanner conjunct size:" << scanner->conjunct_ctxs()->size();
+    if (!contexts.empty()) {
+        std::vector<ExprContext*> new_contexts;
+        auto& scanner_conjunct_ctxs = *scanner->conjunct_ctxs();
+        Expr::clone_if_not_exists(contexts, state, &new_contexts);
+        scanner_conjunct_ctxs.insert(scanner_conjunct_ctxs.end(), new_contexts.begin(),
+                                     new_contexts.end());
+    }
 
     // apply to cgroup
     if (_resource_info != nullptr) {

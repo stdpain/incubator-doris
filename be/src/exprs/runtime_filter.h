@@ -25,6 +25,7 @@
 
 #include "gen_cpp/Exprs_types.h"
 #include "runtime/types.h"
+#include "util/runtime_profile.h"
 #include "util/uid_util.h"
 
 namespace doris {
@@ -101,12 +102,12 @@ private:
 };
 
 struct UpdateRuntimeFilterParams {
-    const PPublishFilterRequest* publish_request;
+    const PPublishFilterRequest* request;
     const char* data;
 };
 
 struct MergeRuntimeFilterParams {
-    const PMergeFilterRequest* merge_request;
+    const PMergeFilterRequest* request;
     const char* data;
 };
 
@@ -120,49 +121,61 @@ public:
     // only used for consumer
     // if filter is not ready for filter data scan_node
     // will wait util it ready or timeout
+    // This function will wait at most config::runtime_filter_shuffle_wait_time_ms
     bool await();
+    // this function will be called if a runtime filter sent by rpc
+    // it will nodify all wait threads
     void signal();
 
     bool is_producer() const { return _is_producer; }
     bool is_consumer() const { return !_is_producer; }
     void set_role(int role) { _is_producer = !role; }
+
+    // update a filter from params and `signal` will be called
     Status update_filter(const UpdateRuntimeFilterParams* param);
     Status merge_from(const ShuffleRuntimeFilter& shuffle_runtime_filter);
 
+    // One of the next three functions must be called
     Status init_with_desc(const TRuntimeFilterDesc* desc);
-    Status init_from_params(const MergeRuntimeFilterParams* param);
-    Status apply_init_update_params(const UpdateRuntimeFilterParams* param);
+    Status init_with_proto_param(const MergeRuntimeFilterParams* param);
+    Status init_with_proto_param(const UpdateRuntimeFilterParams* param);
+
     RuntimeFilterType type() const { return _type; }
 
+    // This function can only be called once
+    // _wrapper's function will be clear
     Status get_push_expr_ctxs(std::list<ExprContext*>* push_expr_ctxs);
+    // This function can be called multiple times
     Status get_push_expr_ctxs(std::vector<ExprContext*>* push_expr_ctxs, const RowDescriptor& desc,
                               const std::shared_ptr<MemTracker>& tracker);
 
-    Status init_producer();
-
+    // serialize _wrapper to protobuf
     Status serialize(PMergeFilterRequest* request, void** data, int* len);
     Status serialize(PPublishFilterRequest* request, void** data = nullptr, int* len = nullptr);
 
-    Status get_data(void** data, int* len);
-
-    // producer should call
+    // producer will call these function
+    Status producer_init();
     Status producer_prepare(const RowDescriptor& desc);
-
     Status producer_close();
 
+    // comsumer should call this function before get_expr_context
+    Status consumer_prepare(const RowDescriptor& desc);
     // consumer should call
     Status consumer_close();
 
-    Status consumer_prepare(const RowDescriptor& desc);
-
+    // async push runtimefilter to remote node
     Status push_to_remote(RuntimeState* state, const TNetworkAddress* addr);
-
     Status join_rpc();
 
 private:
+    // serialize _wrapper to protobuf
     void to_protobuf(PMinMaxFilter* filter);
+
     template <class T>
     Status _serialize(T* request, void** data, int* len);
+
+    template <class T>
+    Status _init_with_proto_param(const T* param);
     // used for await or signal
     std::mutex _inner_mutex;
     std::condition_variable _inner_cv;
@@ -172,16 +185,16 @@ private:
     RuntimePredicateWrapper* _wrapper;
     UniqueId _query_id;
 
-    // will free by pool
+    // will free by state->pool
     const TRuntimeFilterDesc* _runtime_filter_desc = nullptr;
     RuntimeState* _state;
     MemTracker* _mem_tracker;
     ObjectPool* _pool;
 
-    ExprContext* _prob_ctx;
     ExprContext* _build_ctx;
-
-    std::vector<ExprContext*> _target_ctxs;
+    // prob_ctxs is a vector because some runtime filter will generate 
+    // multiple contexts such as minmax filter
+    std::vector<ExprContext*> _prob_ctxs;
 
     struct rpc_context;
     std::shared_ptr<rpc_context> _rpc_context;

@@ -613,6 +613,7 @@ CONF_String(thrift_server_type_of_fe, "THREAD_POOL");
 // if the right table is less than this value in the hash join, 
 // the in expression can be used to push down to the storage engine
 CONF_mInt32(runtime_filter_max_in_num, "1024");
+CONF_mInt32(runtime_filter_shuffle_wait_time_ms, "10000");
 
 } // namespace config
 

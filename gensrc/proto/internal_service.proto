@@ -257,23 +257,26 @@ message PColumnValue {
 
 // TODO: CHECK ALL TYPE
 enum PColumnType {
-    COLUMN_TYPE_INT = 0;
-    COLUMN_TYPE_LONG = 1;
-    COLUMN_TYPE_BIGINT = 2;
-    COLUMN_TYPE_STRING = 3;
-    COLUMN_TYPE_DATE = 4;
-    COLUMN_TYPE_DATETIME = 5;
-    COLUMN_TYPE_DOUBLE = 6;
-    COLUMN_TYPE_FLOAT = 7;
-    COLUMN_TYPE_SMALL_INT = 8;
-    COLUMN_TYPE_DECIMAL = 9;
-    COLUMN_TYPE_DECIMALV2 = 10;
+    COLUMN_TYPE_BOOL = 0;
+    COLUMN_TYPE_INT = 1;
+    COLUMN_TYPE_TINY_INT = 2;
+    COLUMN_TYPE_SMALL_INT = 3;
+    COLUMN_TYPE_BIGINT = 4;
+    COLUMN_TYPE_LARGEINT = 5;
+    COLUMN_TYPE_VARCHAR = 6;
+    COLUMN_TYPE_CHAR = 7;
+    COLUMN_TYPE_DATE = 8;
+    COLUMN_TYPE_DATETIME = 9;
+    COLUMN_TYPE_DOUBLE = 10;
+    COLUMN_TYPE_FLOAT = 11;
+    COLUMN_TYPE_DECIMAL = 12;
+    COLUMN_TYPE_DECIMALV2 = 13;
 }
 
 message PMinMaxFilter {
-    optional PColumnType column_type = 1;
-    optional PColumnValue min_val = 2;
-    optional PColumnValue max_val = 3;
+    required PColumnType column_type = 1;
+    required PColumnValue min_val = 2;
+    required PColumnValue max_val = 3;
 };
 
 enum PFilterType {

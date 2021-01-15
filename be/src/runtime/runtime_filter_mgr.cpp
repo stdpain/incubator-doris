@@ -67,7 +67,7 @@ Status RuntimeFilterMgr::regist_filter(const int role, const TRuntimeFilterDesc&
 
 Status RuntimeFilterMgr::update_filter(const PPublishFilterRequest* request, const char* data) {
     UpdateRuntimeFilterParams params;
-    params.publish_request = request;
+    params.request = request;
     params.data = data;
     int filter_id = request->filter_id();
     ShuffleRuntimeFilter* real_filter = nullptr;
@@ -85,7 +85,7 @@ Status RuntimeFilterMgr::get_merge_addr(TNetworkAddress* addr) {
     return Status::OK();
 }
 
-Status RuntimeFilterMergeController::init_with_desc(const TRuntimeFilterDesc* runtime_filter_desc) {
+Status RuntimeFilterMergeController::_init_with_desc(const TRuntimeFilterDesc* runtime_filter_desc) {
     std::lock_guard<std::mutex> guard(_filter_map_mutex);
     RuntimeFilterCntlVal cntVal;
     cntVal.runtime_filter_desc = runtime_filter_desc;
@@ -104,7 +104,7 @@ Status RuntimeFilterMergeController::init_from(std::vector<TPlanNode> nodes) {
     for (auto& node : nodes) {
         if (node.node_type == TPlanNodeType::HASH_JOIN_NODE) {
             for (auto& filter : node.runtime_filters) {
-                init_with_desc(&filter);
+                _init_with_desc(&filter);
             }
         }
     }
@@ -117,18 +117,24 @@ Status RuntimeFilterMergeController::merge(const PMergeFilterRequest* request, c
     LOG(WARNING) << "recv filter id:" << request->filter_id() << " this:" << (void*)this;
     if (iter == _filter_map.end()) {
         LOG(WARNING) << "unknown filter id:" << std::to_string(request->filter_id());
-        return Status::InvalidArgument("not found filter id");
+        return Status::InvalidArgument("unknown filter id");
     }
     MergeRuntimeFilterParams params;
     params.data = data;
-    params.merge_request = request;
-    std::shared_ptr<MemTracker> tracker = MemTracker::CreateTracker();
+    params.request = request;
+    std::shared_ptr<MemTracker> tracker = iter->second.tracker;
     ObjectPool pool;
     ShuffleRuntimeFilter runtime_filter(nullptr, tracker.get(), &pool);
-    RETURN_IF_ERROR(runtime_filter.init_from_params(&params));
+    RETURN_IF_ERROR(runtime_filter.init_with_proto_param(&params));
     RETURN_IF_ERROR(iter->second.filter->merge_from(runtime_filter));
     iter->second.arrive_id.insert(std::to_string(UnixMicros()));
-    if (iter->second.arrive_id.size() == 2) {
+    std::set<std::string> endpoints;
+    for (auto& entity : this->_runtimefilter_params.planid_to_addr) {
+        LOG(WARNING) << "endpoint:" << entity.second.hostname + std::to_string(entity.second.port);
+        endpoints.insert(entity.second.hostname + std::to_string(entity.second.port));
+    }
+    LOG(WARNING) << "arr size:" << iter->second.arrive_id.size() << ",endpoint:" << endpoints.size();
+    if (iter->second.arrive_id.size() == endpoints.size()) {
         for (const auto& kv : this->_runtimefilter_params.planid_to_addr) {
             // kv.second
             brpc::Controller cntl;
@@ -146,7 +152,6 @@ Status RuntimeFilterMergeController::merge(const PMergeFilterRequest* request, c
                 *apply_request.mutable_query_id() = request->query_id();
                 void* data = nullptr;
                 int len = 0;
-                iter->second.filter->get_data(&data, &len);
                 iter->second.filter->serialize(&apply_request, &data, &len);
                 cntl.request_attachment().append(data, len);
             } else if (iter->second.filter->type() == RuntimeFilterType::MINMAX_FILTER) {

@@ -280,6 +280,7 @@ private:
     int32_t _max_pushdown_conditions_per_column = 1024;
 
     std::vector<TRuntimeFilterDesc> _runtime_filter_descs;
+    std::vector<bool> _runtime_filter_pushed_marks;
 
     std::unique_ptr<RuntimeProfile> _scanner_profile;
     std::unique_ptr<RuntimeProfile> _segment_profile;

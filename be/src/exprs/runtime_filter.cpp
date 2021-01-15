@@ -33,6 +33,7 @@
 #include "gen_cpp/types.pb.h"
 #include "runtime/runtime_state.h"
 #include "runtime/type_limit.h"
+#include "util/string_parser.hpp"
 
 namespace doris {
 // only used in Runtime Filter
@@ -157,6 +158,7 @@ MinMaxFuncBase* MinMaxFuncBase::create_minmax_filter(PrimitiveType type) {
 }
 
 // PrimitiveType->TExprNodeType
+// TODO: use constexpr if we use c++14
 static TExprNodeType::type get_expr_node_type(PrimitiveType type) {
     switch (type) {
     case TYPE_BOOLEAN:
@@ -200,35 +202,38 @@ static TExprNodeType::type get_expr_node_type(PrimitiveType type) {
     }
 }
 
+// PrimitiveType->PColumnType
+// TODO: use constexpr if we use c++14
 PColumnType to_proto(PrimitiveType type) {
     switch (type) {
     case TYPE_BOOLEAN:
+        return PColumnType::COLUMN_TYPE_BOOL;
     case TYPE_TINYINT:
+        return PColumnType::COLUMN_TYPE_TINY_INT;
     case TYPE_SMALLINT:
+        return PColumnType::COLUMN_TYPE_SMALL_INT;
     case TYPE_INT:
         return PColumnType::COLUMN_TYPE_INT;
     case TYPE_BIGINT:
-        return PColumnType::COLUMN_TYPE_LONG;
-
+        return PColumnType::COLUMN_TYPE_BIGINT;
     case TYPE_LARGEINT:
-        break;
-
-    case TYPE_NULL:
-
+        return PColumnType::COLUMN_TYPE_LARGEINT;
     case TYPE_FLOAT:
+        return PColumnType::COLUMN_TYPE_FLOAT;
     case TYPE_DOUBLE:
-    case TYPE_TIME:
-
-    case TYPE_DECIMAL:
-    case TYPE_DECIMALV2:
-
+        return PColumnType::COLUMN_TYPE_DOUBLE;
+    case TYPE_DATE:
+        return PColumnType::COLUMN_TYPE_DATE;
     case TYPE_DATETIME:
-
+        return PColumnType::COLUMN_TYPE_DATETIME;
+    case TYPE_DECIMAL:
+        return PColumnType::COLUMN_TYPE_DECIMAL;
+    case TYPE_DECIMALV2:
+        return PColumnType::COLUMN_TYPE_DECIMALV2;
     case TYPE_CHAR:
+        return PColumnType::COLUMN_TYPE_CHAR;
     case TYPE_VARCHAR:
-    case TYPE_HLL:
-    case TYPE_OBJECT:
-
+        return PColumnType::COLUMN_TYPE_VARCHAR;
     default:
         DCHECK(false) << "Invalid type.";
     }
@@ -236,12 +241,38 @@ PColumnType to_proto(PrimitiveType type) {
     return PColumnType::COLUMN_TYPE_INT;
 }
 
+// PColumnType->PrimitiveType
+// TODO: use constexpr if we use c++14
 PrimitiveType to_primitive_type(PColumnType type) {
     switch (type) {
+    case PColumnType::COLUMN_TYPE_BOOL:
+        return TYPE_BOOLEAN;
+    case PColumnType::COLUMN_TYPE_TINY_INT:
+        return TYPE_TINYINT;
+    case PColumnType::COLUMN_TYPE_SMALL_INT:
+        return TYPE_SMALLINT;
     case PColumnType::COLUMN_TYPE_INT:
         return TYPE_INT;
-    case PColumnType::COLUMN_TYPE_LONG:
+    case PColumnType::COLUMN_TYPE_BIGINT:
         return TYPE_BIGINT;
+    case PColumnType::COLUMN_TYPE_LARGEINT:
+        return TYPE_LARGEINT;
+    case PColumnType::COLUMN_TYPE_FLOAT:
+        return TYPE_FLOAT;
+    case PColumnType::COLUMN_TYPE_DOUBLE:
+        return TYPE_DOUBLE;
+    case PColumnType::COLUMN_TYPE_DATE:
+        return TYPE_DATE;
+    case PColumnType::COLUMN_TYPE_DATETIME:
+        return TYPE_DATETIME;
+    case PColumnType::COLUMN_TYPE_DECIMAL:
+        return TYPE_DECIMAL;
+    case PColumnType::COLUMN_TYPE_DECIMALV2:
+        return TYPE_DECIMALV2;
+    case PColumnType::COLUMN_TYPE_VARCHAR:
+        return TYPE_VARCHAR;
+    case PColumnType::COLUMN_TYPE_CHAR:
+        return TYPE_CHAR;
     default:
         DCHECK(false);
     }
@@ -482,6 +513,9 @@ public:
             min_pred->add_child(Expr::copy(_pool, _expr_ctx->root()));
             min_pred->add_child(min_literal);
             container->push_back(_pool->add(new ExprContext(min_pred)));
+
+            _pool->add(max_pred);
+            _pool->add(min_pred);
             break;
         }
         case RuntimeFilterType::BLOOM_FILTER: {
@@ -531,6 +565,7 @@ public:
     }
 
     // used by shuffle runtime filter
+    // assign this filter by protobuf
     Status assign(const PBloomFilter* bloom_filter, const char* data) {
         DCHECK(_tracker != nullptr);
         // we won't use this class to insert or find any data
@@ -540,26 +575,88 @@ public:
         return _bloomfilter_func->assign(data, bloom_filter->filter_length());
     }
 
+    // used by shuffle runtime filter
+    // assign this filter by protobuf
     Status assign(const PMinMaxFilter* minmax_filter) {
         DCHECK(_tracker != nullptr);
         PrimitiveType type = to_primitive_type(minmax_filter->column_type());
         _minmax_func.reset(MinMaxFuncBase::create_minmax_filter(type));
         switch (type) {
+        case TYPE_BOOLEAN: {
+            bool min_val;
+            bool max_val;
+            min_val = minmax_filter->min_val().boolval();
+            max_val = minmax_filter->max_val().boolval();
+            return _minmax_func->assign(&min_val, &max_val);
+        }
+        case TYPE_TINYINT: {
+            int8_t min_val;
+            int8_t max_val;
+            min_val = static_cast<int8_t>(minmax_filter->min_val().intval());
+            max_val = static_cast<int8_t>(minmax_filter->max_val().intval());
+            return _minmax_func->assign(&min_val, &max_val);
+        }
+        case TYPE_SMALLINT: {
+            int16_t min_val;
+            int16_t max_val;
+            min_val = static_cast<int16_t>(minmax_filter->min_val().intval());
+            max_val = static_cast<int16_t>(minmax_filter->max_val().intval());
+            return _minmax_func->assign(&min_val, &max_val);
+        }
         case TYPE_INT: {
-            auto min_val = _pool->add(new int32_t);
-            auto max_val = _pool->add(new int32_t);
-            *min_val = minmax_filter->min_val().intval();
-            *max_val = minmax_filter->max_val().intval();
-            return _minmax_func->assign(min_val, max_val);
+            int32_t min_val;
+            int32_t max_val;
+            min_val = minmax_filter->min_val().intval();
+            max_val = minmax_filter->max_val().intval();
+            return _minmax_func->assign(&min_val, &max_val);
         }
         case TYPE_BIGINT: {
-            auto min_val = _pool->add(new int64);
-            auto max_val = _pool->add(new int64);
-            *min_val = minmax_filter->min_val().longval();
-            *max_val = minmax_filter->max_val().longval();
-            return _minmax_func->assign(min_val, max_val);
+            int64_t min_val;
+            int64_t max_val;
+            min_val = minmax_filter->min_val().longval();
+            max_val = minmax_filter->max_val().longval();
+            return _minmax_func->assign(&min_val, &max_val);
+        }
+        case TYPE_LARGEINT: {
+            int128_t min_val;
+            int128_t max_val;
+            auto min_string_val = minmax_filter->min_val().stringval();
+            auto max_string_val = minmax_filter->max_val().stringval();
+            StringParser::ParseResult result;
+            min_val = StringParser::string_to_int<int128_t>(min_string_val.c_str(),
+                                                            min_string_val.length(), &result);
+            DCHECK(result == StringParser::PARSE_SUCCESS);
+            max_val = StringParser::string_to_int<int128_t>(max_string_val.c_str(),
+                                                            min_string_val.length(), &result);
+            DCHECK(result == StringParser::PARSE_SUCCESS);
+            return _minmax_func->assign(&min_val, &max_val);
+        }
+        case TYPE_FLOAT: {
+            float min_val;
+            float max_val;
+            min_val = static_cast<float>(minmax_filter->min_val().doubleval());
+            max_val = static_cast<float>(minmax_filter->max_val().doubleval());
+            return _minmax_func->assign(&min_val, &max_val);
+        }
+        case TYPE_DOUBLE: {
+            double min_val;
+            double max_val;
+            min_val = static_cast<double>(minmax_filter->min_val().doubleval());
+            max_val = static_cast<double>(minmax_filter->min_val().doubleval());
+            return _minmax_func->assign(&min_val, &max_val);
+        }
+        case TYPE_DATETIME:
+        case TYPE_DATE: {
+            auto& min_val_ref = minmax_filter->min_val().stringval();
+            auto& max_val_ref = minmax_filter->max_val().stringval();
+            DateTimeValue min_val;
+            DateTimeValue max_val;
+            min_val.from_date_str(min_val_ref.c_str(), min_val_ref.length());
+            max_val.from_date_str(max_val_ref.c_str(), max_val_ref.length());
+            return _minmax_func->assign(&min_val, &max_val);
         }
         default:
+            DCHECK(false) << "unknown type";
             break;
         }
         // get type from bloom filter
@@ -636,7 +733,7 @@ Status RuntimeFilter::get_push_expr_ctxs(std::list<ExprContext*>* push_expr_ctxs
 
 ShuffleRuntimeFilter::ShuffleRuntimeFilter(RuntimeState* state, MemTracker* tracker,
                                            ObjectPool* pool)
-        : _is_ready(false), _query_id(0, 0), _state(state), _mem_tracker(tracker), _pool(pool) {}
+        : _is_ready(false), _query_id(-1, -1), _state(state), _mem_tracker(tracker), _pool(pool) {}
 
 void ShuffleRuntimeFilter::insert(TupleRow* row) {
     DCHECK(is_producer());
@@ -647,7 +744,7 @@ void ShuffleRuntimeFilter::insert(TupleRow* row) {
 
 bool ShuffleRuntimeFilter::await() {
     DCHECK(is_consumer());
-    int64_t wait_times_ms = 100000;
+    int64_t wait_times_ms = config::runtime_filter_shuffle_wait_time_ms;
     if (!_is_ready) {
         std::unique_lock<std::mutex> lock(_inner_mutex);
         return _inner_cv.wait_for(lock, std::chrono::milliseconds(wait_times_ms),
@@ -673,7 +770,7 @@ Status ShuffleRuntimeFilter::update_filter(const UpdateRuntimeFilterParams* para
     std::shared_ptr<MemTracker> tracker = MemTracker::CreateTracker();
     ObjectPool pool;
     ShuffleRuntimeFilter filter(nullptr, tracker.get(), &pool);
-    RETURN_IF_ERROR(filter.apply_init_update_params(param));
+    RETURN_IF_ERROR(filter.init_with_proto_param(param));
     RETURN_IF_ERROR(_wrapper->merge(filter._wrapper));
     this->signal();
     return Status::OK();
@@ -729,46 +826,36 @@ PFilterType get_type(RuntimeFilterType type) {
     }
 }
 
-Status ShuffleRuntimeFilter::init_from_params(const MergeRuntimeFilterParams* param) {
-    int filter_type = param->merge_request->filter_type();
+Status ShuffleRuntimeFilter::init_with_proto_param(const MergeRuntimeFilterParams* param) {
+    return _init_with_proto_param(param);
+}
+
+Status ShuffleRuntimeFilter::init_with_proto_param(const UpdateRuntimeFilterParams* param) {
+    return _init_with_proto_param(param);
+}
+
+template <class T>
+Status ShuffleRuntimeFilter::_init_with_proto_param(const T* param) {
+    int filter_type = param->request->filter_type();
     _wrapper = _pool->add(new RuntimePredicateWrapper(_mem_tracker, _pool, get_type(filter_type)));
 
     switch (filter_type) {
     case PFilterType::BLOOM_FILTER: {
         _type = RuntimeFilterType::BLOOM_FILTER;
-        DCHECK(param->merge_request->has_bloom_filter());
-        return _wrapper->assign(&param->merge_request->bloom_filter(), param->data);
+        DCHECK(param->request->has_bloom_filter());
+        return _wrapper->assign(&param->request->bloom_filter(), param->data);
     }
     case PFilterType::MINMAX_FILTER: {
         _type = RuntimeFilterType::MINMAX_FILTER;
-        DCHECK(param->merge_request->has_minmax_filter());
-        return _wrapper->assign(&param->merge_request->minmax_filter());
+        DCHECK(param->request->has_minmax_filter());
+        return _wrapper->assign(&param->request->minmax_filter());
     }
     default:
         return Status::InvalidArgument("unknow filter type");
     }
-    return Status::OK();
 }
 
-Status ShuffleRuntimeFilter::apply_init_update_params(const UpdateRuntimeFilterParams* param) {
-    int filter_type = param->publish_request->filter_type();
-    _wrapper = _pool->add(new RuntimePredicateWrapper(_mem_tracker, _pool, get_type(filter_type)));
-
-    switch (filter_type) {
-    case PFilterType::BLOOM_FILTER: {
-        DCHECK(param->publish_request->has_bloom_filter());
-        return _wrapper->assign(&param->publish_request->bloom_filter(), param->data);
-    }
-    case PFilterType::MINMAX_FILTER:
-        DCHECK(param->publish_request->has_minmax_filter());
-        return _wrapper->assign(&param->publish_request->minmax_filter());
-    default:
-        return Status::InvalidArgument("unknow filter type");
-    }
-    return Status::OK();
-}
-
-Status ShuffleRuntimeFilter::init_producer() {
+Status ShuffleRuntimeFilter::producer_init() {
     DCHECK(is_producer());
     // init build-context
     RETURN_IF_ERROR(Expr::create_expr_tree(_pool, _runtime_filter_desc->src_expr, &_build_ctx));
@@ -796,77 +883,104 @@ Status ShuffleRuntimeFilter::get_push_expr_ctxs(std::vector<ExprContext*>* push_
     DCHECK(_is_ready);
     DCHECK(is_consumer());
     std::lock_guard<std::mutex> guard(_inner_mutex);
-    if (!_target_ctxs.empty()) {
-        push_expr_ctxs->insert(push_expr_ctxs->end(), _target_ctxs.begin(), _target_ctxs.end());
+    if (!_prob_ctxs.empty()) {
+        push_expr_ctxs->insert(push_expr_ctxs->end(), _prob_ctxs.begin(), _prob_ctxs.end());
         return Status::OK();
     }
-    RETURN_IF_ERROR(_wrapper->get_push_context(&_target_ctxs));
-    Expr::prepare(_target_ctxs, _state, desc, tracker);
-    Expr::open(_target_ctxs, _state);
+    RETURN_IF_ERROR(_wrapper->get_push_context(&_prob_ctxs));
+    Expr::prepare(_prob_ctxs, _state, desc, tracker);
+    Expr::open(_prob_ctxs, _state);
     return Status::OK();
 }
 
 void ShuffleRuntimeFilter::to_protobuf(PMinMaxFilter* filter) {
+    void* min_data = nullptr;
+    void* max_data = nullptr;
+    _wrapper->get_minmax_filter_desc(&min_data, &max_data);
+    DCHECK(min_data != nullptr);
+    DCHECK(max_data != nullptr);
+    filter->set_column_type(to_proto(_wrapper->expr_primitive_type()));
     switch (_wrapper->expr_primitive_type()) {
     case TYPE_BOOLEAN: {
-        break;
+        filter->mutable_min_val()->set_boolval(*reinterpret_cast<const int32_t*>(min_data));
+        filter->mutable_max_val()->set_boolval(*reinterpret_cast<const int32_t*>(max_data));
+        return;
     }
     case TYPE_TINYINT: {
-        break;
+        filter->mutable_min_val()->set_intval(*reinterpret_cast<const int8_t*>(min_data));
+        filter->mutable_max_val()->set_intval(*reinterpret_cast<const int8_t*>(max_data));
+        return;
     }
     case TYPE_SMALLINT: {
-        break;
+        filter->mutable_min_val()->set_intval(*reinterpret_cast<const int16_t*>(min_data));
+        filter->mutable_max_val()->set_intval(*reinterpret_cast<const int16_t*>(max_data));
+        return;
     }
     case TYPE_INT: {
-        filter->set_column_type(PColumnType::COLUMN_TYPE_INT);
-        void* min_data = nullptr;
-        void* max_data = nullptr;
-        _wrapper->get_minmax_filter_desc(&min_data, &max_data);
-        DCHECK(min_data != nullptr);
-        DCHECK(max_data != nullptr);
         filter->mutable_min_val()->set_intval(*reinterpret_cast<const int32_t*>(min_data));
         filter->mutable_max_val()->set_intval(*reinterpret_cast<const int32_t*>(max_data));
         return;
     }
     case TYPE_BIGINT: {
-        filter->set_column_type(PColumnType::COLUMN_TYPE_BIGINT);
-        void* min_data = nullptr;
-        void* max_data = nullptr;
-        _wrapper->get_minmax_filter_desc(&min_data, &max_data);
-        DCHECK(min_data != nullptr);
-        DCHECK(max_data != nullptr);
         filter->mutable_min_val()->set_longval(*reinterpret_cast<const int64_t*>(min_data));
         filter->mutable_max_val()->set_longval(*reinterpret_cast<const int64_t*>(max_data));
         return;
     }
     case TYPE_LARGEINT: {
-        break;
+        filter->mutable_min_val()->set_stringval(
+                LargeIntValue::to_string(*reinterpret_cast<const int128_t*>(min_data)));
+        filter->mutable_max_val()->set_stringval(
+                LargeIntValue::to_string(*reinterpret_cast<const int128_t*>(max_data)));
+        return;
     }
     case TYPE_FLOAT: {
-        break;
+        filter->mutable_min_val()->set_doubleval(*reinterpret_cast<const float*>(min_data));
+        filter->mutable_max_val()->set_doubleval(*reinterpret_cast<const float*>(max_data));
+        return;
     }
     case TYPE_DOUBLE: {
-        break;
+        filter->mutable_min_val()->set_doubleval(*reinterpret_cast<const double*>(min_data));
+        filter->mutable_max_val()->set_doubleval(*reinterpret_cast<const double*>(max_data));
+        return;
     }
     case TYPE_DATE:
     case TYPE_DATETIME: {
-        break;
+        char convert_buffer[30];
+        reinterpret_cast<const DateTimeValue*>(min_data)->to_string(convert_buffer);
+        filter->mutable_min_val()->set_stringval(convert_buffer);
+        reinterpret_cast<const DateTimeValue*>(max_data)->to_string(convert_buffer);
+        filter->mutable_max_val()->set_stringval(convert_buffer);
+        return;
     }
     case TYPE_DECIMAL: {
-        break;
+        filter->mutable_min_val()->set_stringval(
+                reinterpret_cast<const DecimalValue*>(min_data)->to_string());
+        filter->mutable_max_val()->set_stringval(
+                reinterpret_cast<const DecimalValue*>(max_data)->to_string());
+        return;
     }
     case TYPE_DECIMALV2: {
-        break;
+        filter->mutable_min_val()->set_stringval(
+                reinterpret_cast<const DecimalV2Value*>(min_data)->to_string());
+        filter->mutable_max_val()->set_stringval(
+                reinterpret_cast<const DecimalV2Value*>(max_data)->to_string());
+        return;
     }
     case TYPE_CHAR:
     case TYPE_VARCHAR: {
+        const StringValue* min_string_value = reinterpret_cast<const StringValue*>(min_data);
+        filter->mutable_min_val()->set_stringval(
+                std::string(min_string_value->ptr, min_string_value->len));
+        const StringValue* max_string_value = reinterpret_cast<const StringValue*>(max_data);
+        filter->mutable_max_val()->set_stringval(
+                std::string(max_string_value->ptr, max_string_value->len));
         break;
     }
     default: {
+        DCHECK(false) << "unknown type";
         break;
     }
     }
-    DCHECK(false);
 }
 
 template <class T>
@@ -893,15 +1007,6 @@ Status ShuffleRuntimeFilter::serialize(PPublishFilterRequest* request, void** da
     return _serialize(request, data, len);
 }
 
-Status ShuffleRuntimeFilter::get_data(void** data, int* len) {
-    if (_type == RuntimeFilterType::BLOOM_FILTER) {
-        RETURN_IF_ERROR(_wrapper->get_bloom_filter_desc((char**)data, len));
-        DCHECK(data != nullptr);
-        DCHECK(len > 0);
-    }
-    return Status::InternalError("unknown type ===");
-}
-
 ShuffleRuntimeFilter::~ShuffleRuntimeFilter() {}
 
 Status ShuffleRuntimeFilter::consumer_prepare(const RowDescriptor& desc) {
@@ -909,7 +1014,7 @@ Status ShuffleRuntimeFilter::consumer_prepare(const RowDescriptor& desc) {
 }
 
 Status ShuffleRuntimeFilter::consumer_close() {
-    Expr::close(_target_ctxs, _state);
+    Expr::close(_prob_ctxs, _state);
     return Status::OK();
 }
 

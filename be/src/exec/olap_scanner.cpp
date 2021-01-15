@@ -114,7 +114,7 @@ Status OlapScanner::prepare(const TPaloScanRange& scan_range,
 Status OlapScanner::open() {
     SCOPED_TIMER(_parent->_reader_init_timer);
 
-    _filter_apply_marks.resize(_parent->runtime_filter_descs().size(), false);
+    _runtime_filter_marks.resize(_parent->runtime_filter_descs().size(), false);
 
     auto res = _reader->init(_params);
     if (res != OLAP_SUCCESS) {

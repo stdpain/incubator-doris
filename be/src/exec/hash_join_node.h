@@ -175,6 +175,8 @@ private:
     // doing the join.
     std::string get_probe_row_output_string(TupleRow* probe_row);
 
+    void handle_runtime_filter(bool is_shuffle, boost::promise<Status>& status);
+
     std::vector<TRuntimeFilterDesc> _runtime_filter_descs;
 };
 

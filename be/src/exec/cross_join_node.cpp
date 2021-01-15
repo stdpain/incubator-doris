@@ -24,6 +24,7 @@
 #include "runtime/row_batch.h"
 #include "runtime/runtime_state.h"
 #include "util/debug_util.h"
+#include "util/defer_op.h"
 #include "util/runtime_profile.h"
 
 namespace doris {
@@ -52,7 +53,9 @@ Status CrossJoinNode::close(RuntimeState* state) {
 Status CrossJoinNode::construct_build_side(RuntimeState* state) {
     // Do a full scan of child(1) and store all build row batches.
     RETURN_IF_ERROR(child(1)->open(state));
-
+    DeferOp defer([&] {
+        COUNTER_SET(_build_row_counter, static_cast<int64_t>(_build_batches.total_num_rows()));
+    });
     while (true) {
         RowBatch* batch = _build_batch_pool->add(
                 new RowBatch(child(1)->row_desc(), state->batch_size(), mem_tracker().get()));
@@ -69,7 +72,6 @@ Status CrossJoinNode::construct_build_side(RuntimeState* state) {
         SCOPED_TIMER(_build_timer);
         _build_batches.add_row_batch(batch);
         VLOG_ROW << build_list_debug_string();
-        COUNTER_SET(_build_row_counter, static_cast<int64_t>(_build_batches.total_num_rows()));
 
         if (eos) {
             break;
