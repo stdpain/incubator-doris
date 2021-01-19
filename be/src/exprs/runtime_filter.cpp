@@ -659,8 +659,6 @@ public:
             DCHECK(false) << "unknown type";
             break;
         }
-        // get type from bloom filter
-        // return _minmax_func->assign()
         return Status::InvalidArgument("not support!");
     }
 

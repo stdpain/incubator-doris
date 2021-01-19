@@ -103,6 +103,11 @@ public:
 
     const DateTimeValue& start_time() const { return _start_time; }
 
+    void set_merge_controller_handler(
+            std::shared_ptr<RuntimeFilterMergeControllerEntity>& handler) {
+        _merge_controller_handler = handler;
+    }
+
     // Update status of this fragment execute
     Status update_status(Status status) {
         std::lock_guard<std::mutex> l(_status_lock);
@@ -160,6 +165,8 @@ private:
 
     // This context is shared by all fragments of this host in a query
     std::shared_ptr<QueryFragmentsCtx> _fragments_ctx;
+
+    std::shared_ptr<RuntimeFilterMergeControllerEntity> _merge_controller_handler;
 };
 
 FragmentExecState::FragmentExecState(const TUniqueId& query_id,
@@ -459,25 +466,6 @@ Status FragmentMgr::exec_plan_fragment(const TExecPlanFragmentParams& params, Fi
         }
     }
 
-    {
-        std::lock_guard<std::mutex> guard(_controller_mutex);
-        std::string query_id_str = UniqueId(params.params.query_id).to_string();
-        auto iter = _filter_controller_map.find(query_id_str);
-        std::shared_ptr<RuntimeFilterMergeController> filter_merge_controller;
-        if (iter == _filter_controller_map.end()) {
-            std::shared_ptr<RuntimeFilterMergeController> controller(
-                    new RuntimeFilterMergeController());
-            _filter_controller_map[query_id_str] = controller;
-        }
-        filter_merge_controller = _filter_controller_map[query_id_str];
-        // params.fragment.plan.nodes
-
-        LOG(WARNING) << "query-id:" << query_id_str
-                     << " addr:" << (void*)filter_merge_controller.get();
-        RETURN_IF_ERROR(filter_merge_controller->init_from(params.fragment.plan.nodes));
-        filter_merge_controller->set_filter_params(params.params.runtime_filter_params);
-    }
-
     std::shared_ptr<FragmentExecState> exec_state;
     if (!params.__isset.is_simplified_param) {
         // This is an old version params, all @Common components is set in TExecPlanFragmentParams.
@@ -536,6 +524,10 @@ Status FragmentMgr::exec_plan_fragment(const TExecPlanFragmentParams& params, Fi
                                                params.params.fragment_instance_id,
                                                params.backend_num, _exec_env, fragments_ctx));
     }
+    
+    std::shared_ptr<RuntimeFilterMergeControllerEntity> handler;
+    _runtimefilter_controller.add_entity(params, &handler);
+    exec_state->set_merge_controller_handler(handler);
 
     RETURN_IF_ERROR(exec_state->prepare(params));
     {
@@ -765,7 +757,6 @@ Status FragmentMgr::apply_filter(const PPublishFilterRequest* request, const cha
     bool handle = false;
     {
         std::lock_guard<std::mutex> lock(_lock);
-        LOG(WARNING) << "framemap_size:" << _fragment_map.size();
         for (auto kv : _fragment_map) {
             if (query_id == kv.second->query_id()) {
                 std::shared_ptr<FragmentExecState> fragment_state;
@@ -774,7 +765,7 @@ Status FragmentMgr::apply_filter(const PPublishFilterRequest* request, const cha
                         fragment_state->executor()->runtime_state()->runtime_filter_mgr();
                 Status st = runtime_filter_mgr->update_filter(request, data);
                 handle = true;
-                LOG(WARNING) << "apply filter state " << st.to_string();
+                LOG(INFO) << "apply filter state " << st.to_string();
             }
         }
     }
@@ -787,21 +778,9 @@ Status FragmentMgr::apply_filter(const PPublishFilterRequest* request, const cha
 
 Status FragmentMgr::merge_filter(const PMergeFilterRequest* request, const char* attach_data) {
     UniqueId queryid = request->query_id();
-    std::shared_ptr<RuntimeFilterMergeController> filter_controller;
-    RETURN_IF_ERROR(get_merge_controller(&queryid, &filter_controller));
+    std::shared_ptr<RuntimeFilterMergeControllerEntity> filter_controller;
+    RETURN_IF_ERROR(_runtimefilter_controller.acquire(queryid, &filter_controller));
     RETURN_IF_ERROR(filter_controller->merge(request, attach_data));
-    return Status::OK();
-}
-
-Status FragmentMgr::get_merge_controller(
-        const UniqueId* queryid, std::shared_ptr<RuntimeFilterMergeController>* filter_controller) {
-    std::lock_guard<std::mutex> guard(_controller_mutex);
-    LOG(WARNING) << __FUNCTION__ << "-queryid:" << queryid->to_string();
-    auto iter = _filter_controller_map.find(queryid->to_string());
-    if (iter == _filter_controller_map.end()) {
-        return Status::InvalidArgument("not found ...");
-    }
-    *filter_controller = iter->second;
     return Status::OK();
 }
 

@@ -85,22 +85,28 @@ Status RuntimeFilterMgr::get_merge_addr(TNetworkAddress* addr) {
     return Status::OK();
 }
 
-Status RuntimeFilterMergeController::_init_with_desc(const TRuntimeFilterDesc* runtime_filter_desc) {
+Status RuntimeFilterMergeControllerEntity::_init_with_desc(
+        const TRuntimeFilterDesc* runtime_filter_desc) {
     std::lock_guard<std::mutex> guard(_filter_map_mutex);
-    RuntimeFilterCntlVal cntVal;
-    cntVal.runtime_filter_desc = runtime_filter_desc;
-    cntVal.pool.reset(new ObjectPool());
-    cntVal.tracker = MemTracker::CreateTracker();
-    cntVal.filter = cntVal.pool->add(
-            new ShuffleRuntimeFilter(nullptr, cntVal.tracker.get(), cntVal.pool.get()));
+    std::shared_ptr<RuntimeFilterCntlVal> cntVal = std::make_shared<RuntimeFilterCntlVal>();
+    // We don’t know when runtime_filter_desc will be released,
+    // so we need to copy to cntVal
+    cntVal->runtime_filter_desc = *runtime_filter_desc;
+    cntVal->pool.reset(new ObjectPool());
+    cntVal->tracker = MemTracker::CreateTracker();
+    cntVal->filter = cntVal->pool->add(
+            new ShuffleRuntimeFilter(nullptr, cntVal->tracker.get(), cntVal->pool.get()));
+
     std::string filter_id = std::to_string(runtime_filter_desc->filter_id);
-    LOG(WARNING) << "regist filter id:" << filter_id << " this:" << (void*)this;
-    cntVal.filter->init_with_desc(runtime_filter_desc);
+    LOG(INFO) << "entity filter id:" << filter_id;
+    cntVal->filter->init_with_desc(&cntVal->runtime_filter_desc);
     _filter_map.emplace(filter_id, cntVal);
     return Status::OK();
 }
 
-Status RuntimeFilterMergeController::init_from(std::vector<TPlanNode> nodes) {
+Status RuntimeFilterMergeControllerEntity::init_from(UniqueId query_id,
+                                                     const std::vector<TPlanNode>& nodes) {
+    _query_id = query_id;
     for (auto& node : nodes) {
         if (node.node_type == TPlanNodeType::HASH_JOIN_NODE) {
             for (auto& filter : node.runtime_filters) {
@@ -112,29 +118,37 @@ Status RuntimeFilterMergeController::init_from(std::vector<TPlanNode> nodes) {
 }
 
 // merge data
-Status RuntimeFilterMergeController::merge(const PMergeFilterRequest* request, const char* data) {
-    auto iter = _filter_map.find(std::to_string(request->filter_id()));
-    LOG(WARNING) << "recv filter id:" << request->filter_id() << " this:" << (void*)this;
-    if (iter == _filter_map.end()) {
-        LOG(WARNING) << "unknown filter id:" << std::to_string(request->filter_id());
-        return Status::InvalidArgument("unknown filter id");
+Status RuntimeFilterMergeControllerEntity::merge(const PMergeFilterRequest* request,
+                                                 const char* data) {
+    std::shared_ptr<RuntimeFilterCntlVal> cntVal;
+    int merged_size = 0;
+    {
+        std::lock_guard<std::mutex> guard(_filter_map_mutex);
+        auto iter = _filter_map.find(std::to_string(request->filter_id()));
+        LOG(INFO) << "recv filter id:" << request->filter_id();
+        if (iter == _filter_map.end()) {
+            LOG(WARNING) << "unknown filter id:" << std::to_string(request->filter_id());
+            return Status::InvalidArgument("unknown filter id");
+        }
+        cntVal = iter->second;
+        MergeRuntimeFilterParams params;
+        params.data = data;
+        params.request = request;
+        std::shared_ptr<MemTracker> tracker = iter->second->tracker;
+        ObjectPool pool;
+        ShuffleRuntimeFilter runtime_filter(nullptr, tracker.get(), &pool);
+        RETURN_IF_ERROR(runtime_filter.init_with_proto_param(&params));
+        RETURN_IF_ERROR(cntVal->filter->merge_from(runtime_filter));
+        cntVal->arrive_id.insert(std::to_string(UnixMicros()));
+        merged_size = cntVal->arrive_id.size();
     }
-    MergeRuntimeFilterParams params;
-    params.data = data;
-    params.request = request;
-    std::shared_ptr<MemTracker> tracker = iter->second.tracker;
-    ObjectPool pool;
-    ShuffleRuntimeFilter runtime_filter(nullptr, tracker.get(), &pool);
-    RETURN_IF_ERROR(runtime_filter.init_with_proto_param(&params));
-    RETURN_IF_ERROR(iter->second.filter->merge_from(runtime_filter));
-    iter->second.arrive_id.insert(std::to_string(UnixMicros()));
+
     std::set<std::string> endpoints;
     for (auto& entity : this->_runtimefilter_params.planid_to_addr) {
-        LOG(WARNING) << "endpoint:" << entity.second.hostname + std::to_string(entity.second.port);
         endpoints.insert(entity.second.hostname + std::to_string(entity.second.port));
     }
-    LOG(WARNING) << "arr size:" << iter->second.arrive_id.size() << ",endpoint:" << endpoints.size();
-    if (iter->second.arrive_id.size() == endpoints.size()) {
+    LOG(INFO) << "merge size:" << merged_size << ",endpoint size:" << endpoints.size();
+    if (merged_size == endpoints.size()) {
         for (const auto& kv : this->_runtimefilter_params.planid_to_addr) {
             // kv.second
             brpc::Controller cntl;
@@ -147,19 +161,19 @@ Status RuntimeFilterMergeController::merge(const PMergeFilterRequest* request, c
             PPublishFilterResponse apply_response;
             apply_request.set_filter_id(request->filter_id());
             PBackendService_Stub stub(&channel);
-            if (iter->second.filter->type() == RuntimeFilterType::BLOOM_FILTER) {
+            if (cntVal->filter->type() == RuntimeFilterType::BLOOM_FILTER) {
                 apply_request.set_filter_type(PFilterType::BLOOM_FILTER);
                 *apply_request.mutable_query_id() = request->query_id();
                 void* data = nullptr;
                 int len = 0;
-                iter->second.filter->serialize(&apply_request, &data, &len);
+                cntVal->filter->serialize(&apply_request, &data, &len);
                 cntl.request_attachment().append(data, len);
-            } else if (iter->second.filter->type() == RuntimeFilterType::MINMAX_FILTER) {
+            } else if (cntVal->filter->type() == RuntimeFilterType::MINMAX_FILTER) {
                 apply_request.set_filter_type(PFilterType::MINMAX_FILTER);
                 *apply_request.mutable_query_id() = request->query_id();
                 apply_request.mutable_minmax_filter()->set_column_type(
                         PColumnType::COLUMN_TYPE_BIGINT);
-                iter->second.filter->serialize(&apply_request, nullptr, nullptr);
+                cntVal->filter->serialize(&apply_request, nullptr, nullptr);
             }
             stub.apply_filter(&cntl, &apply_request, &apply_response, nullptr);
             LOG(WARNING) << "apply_request:" << apply_request.ShortDebugString();
@@ -168,6 +182,62 @@ Status RuntimeFilterMergeController::merge(const PMergeFilterRequest* request, c
             }
         }
     }
+    // TODO: clear the cntl
     return Status::OK();
 }
+
+Status RuntimeFilterMergeController::add_entity(
+        const TExecPlanFragmentParams& params,
+        std::shared_ptr<RuntimeFilterMergeControllerEntity>* handle) {
+    runtime_filter_merge_entity_closer entity_closer =
+            std::bind(runtime_filter_merge_entity_close, this, std::placeholders::_1);
+
+    std::lock_guard<std::mutex> guard(_controller_mutex);
+    UniqueId query_id(params.params.query_id);
+    std::string query_id_str = query_id.to_string();
+    auto iter = _filter_controller_map.find(query_id_str);
+
+    if (iter == _filter_controller_map.end()) {
+        *handle = std::shared_ptr<RuntimeFilterMergeControllerEntity>(
+                new RuntimeFilterMergeControllerEntity(), entity_closer);
+        _filter_controller_map[query_id_str] = handle->get();
+    } else {
+        *handle = _filter_controller_map[query_id_str]->shared_from_this();
+    }
+    LOG(WARNING) << "add entity, query-id:" << query_id_str;
+
+    std::shared_ptr<RuntimeFilterMergeControllerEntity>& filter_merge_controller = *handle;
+    // params.fragment.plan.nodes
+    RETURN_IF_ERROR(filter_merge_controller->init_from(query_id, params.fragment.plan.nodes));
+    filter_merge_controller->set_filter_params(params.params.runtime_filter_params);
+    return Status::OK();
+}
+
+Status RuntimeFilterMergeController::acquire(
+        UniqueId query_id, std::shared_ptr<RuntimeFilterMergeControllerEntity>* handle) {
+    std::lock_guard<std::mutex> guard(_controller_mutex);
+    std::string query_id_str = query_id.to_string();
+    auto iter = _filter_controller_map.find(query_id_str);
+    if (iter == _filter_controller_map.end()) {
+        LOG(WARNING) << "not found entity, query-id:" << query_id_str;
+        return Status::InvalidArgument("not found entity");
+    }
+    *handle = _filter_controller_map[query_id_str]->shared_from_this();
+    return Status::OK();
+}
+
+Status RuntimeFilterMergeController::remove_entity(UniqueId queryId) {
+    std::lock_guard<std::mutex> guard(_controller_mutex);
+    LOG(WARNING) << "remove entity, query-id:" << queryId;
+    _filter_controller_map.erase(queryId.to_string());
+    return Status::OK();
+}
+
+// auto called while call ~std::shared_ptr<RuntimeFilterMergeControllerEntity>
+void runtime_filter_merge_entity_close(RuntimeFilterMergeController* controller,
+                                       RuntimeFilterMergeControllerEntity* entity) {
+    controller->remove_entity(entity->query_id());
+    delete entity;
+}
+
 } // namespace doris

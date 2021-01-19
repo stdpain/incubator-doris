@@ -84,12 +84,11 @@ public:
                                        const TUniqueId& fragment_instance_id,
                                        std::vector<TScanColumnDesc>* selected_columns);
 
+    RuntimeFilterMergeController& runtimefilter_controller() { return _runtimefilter_controller; }
+
     Status apply_filter(const PPublishFilterRequest* request, const char* attach_data);
 
     Status merge_filter(const PMergeFilterRequest* request, const char* attach_data);
-
-    Status get_merge_controller(const UniqueId* queryid,
-                                std::shared_ptr<RuntimeFilterMergeController>* filter_controller);
 
 private:
     void _exec_actual(std::shared_ptr<FragmentExecState> exec_state, FinishCallback cb);
@@ -112,8 +111,7 @@ private:
     std::shared_ptr<MetricEntity> _entity = nullptr;
     UIntGauge* timeout_canceled_fragment_count = nullptr;
 
-    std::mutex _controller_mutex;
-    std::map<std::string, std::shared_ptr<RuntimeFilterMergeController>> _filter_controller_map;
+    RuntimeFilterMergeController _runtimefilter_controller;
 };
 
 } // namespace doris

@@ -85,12 +85,10 @@ private:
         const TRuntimeFilterDesc* runtime_filter_desc;
         ShuffleRuntimeFilter* filter;
     };
-    // we use _filter_map_mutex protect _filter_map
     // RuntimeFilterMgr is owned by RuntimeState, so we only
     // use filter_id as key
     // key: "filter-id"
     std::map<std::string, RuntimeFilterMgrVal> _filter_map;
-    std::mutex _filter_map_mutex;
 
     // we use a single thread to scan time out filter
     // std::mutex _thr_mutex;
@@ -103,34 +101,70 @@ private:
     TPlanFragmentRuntimeFiltersParams _runtime_filter_params;
 };
 
-class RuntimeFilterMergeController {
+// controller -> <query-id, entity>
+class RuntimeFilterMergeControllerEntity
+        : public std::enable_shared_from_this<RuntimeFilterMergeControllerEntity> {
 public:
-    RuntimeFilterMergeController() = default;
-    ~RuntimeFilterMergeController() = default;
+    RuntimeFilterMergeControllerEntity() : _query_id(0, 0) {}
+    ~RuntimeFilterMergeControllerEntity() = default;
 
-    Status init_from(std::vector<TPlanNode> nodes);
+    Status init_from(UniqueId query_id, const std::vector<TPlanNode>& nodes);
 
     Status merge(const PMergeFilterRequest* request, const char* data);
 
     void set_filter_params(const TPlanFragmentRuntimeFiltersParams& params) {
-        _runtimefilter_params = params;
+        if (!_has_params) {
+            _runtimefilter_params = params;
+            _has_params = true;
+        }
     }
+
+    UniqueId query_id() { return _query_id; }
 
 private:
     Status _init_with_desc(const TRuntimeFilterDesc* runtime_filter_desc);
-    
+
     struct RuntimeFilterCntlVal {
         int64_t create_time;
-        const TRuntimeFilterDesc* runtime_filter_desc;
+        TRuntimeFilterDesc runtime_filter_desc;
         ShuffleRuntimeFilter* filter;
         std::set<std::string> arrive_id; // fragment_id ?
         std::shared_ptr<MemTracker> tracker;
         std::shared_ptr<ObjectPool> pool;
     };
+    UniqueId _query_id;
     // filter-id -> val
     std::mutex _filter_map_mutex;
-    std::map<std::string, RuntimeFilterCntlVal> _filter_map;
+    std::map<std::string, std::shared_ptr<RuntimeFilterCntlVal>> _filter_map;
     TPlanFragmentRuntimeFiltersParams _runtimefilter_params;
+    bool _has_params = false;
 };
+
+//
+class RuntimeFilterMergeController {
+public:
+    RuntimeFilterMergeController() = default;
+    ~RuntimeFilterMergeController() = default;
+
+    // thread safe
+    Status add_entity(const TExecPlanFragmentParams& params,
+                      std::shared_ptr<RuntimeFilterMergeControllerEntity>* handle);
+    // thread safe
+    Status acquire(UniqueId query_id, std::shared_ptr<RuntimeFilterMergeControllerEntity>* handle);
+
+    // thread safe
+    Status remove_entity(UniqueId queryId);
+
+private:
+    std::mutex _controller_mutex;
+    using FilterControllerMap = std::map<std::string, RuntimeFilterMergeControllerEntity*>;
+    // str(query-id) -> entity
+    FilterControllerMap _filter_controller_map;
+};
+
+typedef std::function<void(RuntimeFilterMergeControllerEntity*)> runtime_filter_merge_entity_closer;
+
+void runtime_filter_merge_entity_close(RuntimeFilterMergeController* controller,
+                                       RuntimeFilterMergeControllerEntity* entity);
 
 } // namespace doris
