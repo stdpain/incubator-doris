@@ -340,7 +340,7 @@ Status HashJoinNode::open(RuntimeState* state) {
         _is_push_down = state->enable_runtime_filter_mode();
 
         if (_is_push_down) {
-            RuntimeFilter runtime_filter(state, expr_mem_tracker().get(), _pool);
+            LocalRuntimeFilter runtime_filter(state, expr_mem_tracker().get(), _pool);
             for (int i = 0; i < _probe_expr_ctxs.size(); ++i) {
                 if (_hash_tbl->size() <= config::runtime_filter_max_in_num) {
                     RuntimeFilterParams in_filter_params(RuntimeFilterType::IN_FILTER, i,

@@ -186,6 +186,15 @@ enum TExplainLevel {
   VERBOSE
 }
 
+enum TRuntimeFilterMode {
+  // Only broadcast filters are computed in the BE, and are only published to the local
+  // fragment.
+  LOCAL = 1
+
+  // All fiters are computed in the BE, and are published globally.
+  GLOBAL = 2
+}
+
 struct TColumnType {
   1: required TPrimitiveType type
   // Only set if type == CHAR_ARRAY

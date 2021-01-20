@@ -138,8 +138,8 @@ struct TQueryOptions {
   30: optional i32 max_pushdown_conditions_per_column
   // whether enable spilling to disk
   31: optional bool enable_spilling = false;
-
-  32: optional bool enable_runtime_filter_mode = false;
+  // whether enable runtime filter
+  32: optional bool enable_runtime_filter_mode = true;
 }
     
 
@@ -159,20 +159,21 @@ struct TPlanFragmentDestination {
   3: optional Types.TNetworkAddress brpc_server
 }
 
-// Used for merging and publish RuntimeFilter
-struct TPlanFragmentRuntimeFiltersParams {
-  // The address of the merge node
-  1: required Types.TNetworkAddress coord_merge_addr
+struct TRuntimeFilterTargetParams {
+  1: required Types.TUniqueId target_fragment_instance_id
+  // The address of the instance where the fragment is expected to run
+  2: required Types.TNetworkAddress target_fragment_instance_addr
+}
+struct TRuntimeFilterParams {
+  // Runtime filter merge instance address
+  1: optional Types.TNetworkAddress runtime_filter_merge_addr
 
-  // Expect to use the target node ID that specifies this filter. 
-  // Only the instance corresponding to the merged node has this parameter, 
-  // otherwise it will not be serialized
-  2: optional map<i32, Types.TPlanNodeId> filter_id_to_planid
-	
-  // The address of the Backend where the target node ID is located. 
-  // Only the instance corresponding to the merged node has this parameter, 
-  // otherwise it will not be serialized
-  3: optional map<Types.TPlanNodeId, Types.TNetworkAddress> planid_to_addr
+  // Runtime filter ID to the instance address of the fragment,
+  // that is expected to use this runtime filter
+  2: optional map<i32, list<TRuntimeFilterTargetParams>> rid_to_target_param
+
+  // Runtime filter ID to the runtime filter desc
+  3: optional map<i32, PlanNodes.TRuntimeFilterDesc> rid_to_runtime_filter
 }
 
 // Parameters for a single execution instance of a particular TPlanFragment
@@ -207,10 +208,8 @@ struct TPlanFragmentExecParams {
   9: optional i32 sender_id
   10: optional i32 num_senders
   11: optional bool send_query_statistics_with_every_batch
-
-  // Used for merging and publish RuntimeFilter, if there is no RuntimeFilter, 
-  // this item will not be serialized
-  12: optional TPlanFragmentRuntimeFiltersParams runtime_filter_params
+  // Used to merge and send runtime filter
+  12: optional TRuntimeFilterParams runtime_filter_params
 }
 
 // Global query parameters assigned by the coordinator.
@@ -234,6 +233,7 @@ struct TQueryGlobals {
 enum PaloInternalServiceVersion {
   V1
 }
+
 
 // ExecPlanFragment
 
@@ -432,27 +432,3 @@ struct TExportStatusResult {
     2: required Types.TExportState state
     3: optional list<string> files
 }
-
-// enum TRuntimeFilterType {
-//     BLOOM = 0,
-//     MIN_MAX = 1
-// }
-
-// struct TRuntimeFilterDesc {
-//   // filter id
-//   1: required i32 filter_id
-//   2: required Exprs.TExpr src_expr
-//   3: required map<Types.TPlanNodeId, Exprs.TExpr > planid_to_target_expr
-//   4: required TRuntimeFilterType type
-//   5: optional i64 bloom_filter_size_bytes
-// }
-
-// struct TCoordinatorRequest {
-//     1: required Types.TUniqueId query_id
-//     2: list<TRuntimeFilterDesc> filter_descs
-//     // 3: list<Types.TNetworkAddress> target
-// }
-
-// struct TCoordinatorResponse {
-//     1: required Status.TStatus status
-// }

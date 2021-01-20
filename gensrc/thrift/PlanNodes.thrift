@@ -667,14 +667,28 @@ enum TRuntimeFilterType {
   MIN_MAX = 1
 }
 
+// Specification of a runtime filter.
 struct TRuntimeFilterDesc {
-  // filter id
+  // Filter unique id (within a query)
   1: required i32 filter_id
+
+  // Expr on which the filter is built on a hash join.
   2: required Exprs.TExpr src_expr
-  3: required map<Types.TPlanNodeId, Exprs.TExpr> planid_to_target_expr
-  4: required TRuntimeFilterType type
-  5: optional i64 bloom_filter_size_bytes
+
+  // The order of Expr in join predicate
+  3: required i32 expr_order
+
+  // Map of target node id to the target expr
+  4: required map<Types.TPlanNodeId, Exprs.TExpr> planId_to_target_expr
+
+  // The type of runtime filter to build.
+  5: required TRuntimeFilterType type
+
+  // The size of the filter based on the ndv estimate and the min/max limit specified in
+  // the query options. Should be greater than zero for bloom filters, zero otherwise.
+  6: optional i64 bloom_filter_size_bytes
 }
+
 
 // This is essentially a union of all messages corresponding to subclasses
 // of PlanNode.
@@ -717,7 +731,7 @@ struct TPlanNode {
   33: optional TIntersectNode intersect_node
   34: optional TExceptNode except_node
   35: optional TOdbcScanNode odbc_scan_node
-
+  // Runtime filters assigned to this plan node, exist in HashJoinNode and ScanNode
   36: optional list<TRuntimeFilterDesc> runtime_filters
 }
 

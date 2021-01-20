@@ -47,6 +47,10 @@ Status ShuffleRuntimeFilter::push_to_remote(RuntimeState* state, const TNetworkA
     pquery_id->set_hi(_state->query_id().hi);
     pquery_id->set_lo(_state->query_id().lo);
 
+    auto pfragment_instance_id = _rpc_context->request.mutable_fragment_id();
+    pfragment_instance_id->set_hi(state->fragment_instance_id().hi);
+    pfragment_instance_id->set_lo(state->fragment_instance_id().lo);
+
     _rpc_context->request.set_filter_id(_runtime_filter_desc->filter_id);
     _rpc_context->cntl.set_timeout_ms(1000);
 

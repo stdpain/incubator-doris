@@ -78,10 +78,34 @@ struct RuntimeFilterParams {
 /// left table data according to the scanning results of the right table during the join process.
 /// The runtimefilter will build some filter conditions.
 /// that can be pushed down to node based on the results of the right table.
-class RuntimeFilter {
+/// this class is a interface
+class IRuntimeFilter {
 public:
-    RuntimeFilter(RuntimeState* state, MemTracker* mem_tracker, ObjectPool* pool);
-    ~RuntimeFilter();
+    IRuntimeFilter() = default;
+    virtual ~IRuntimeFilter() = default;
+    // insert data to build filter
+    virtual void insert(void *data) = 0;
+
+    // prepare something before insert
+    virtual void prepare() = 0;
+    
+    // publish filter
+    // push filter to remote node or push down it to scan_node
+    virtual void publish() = 0;
+protected:
+    RuntimeState* _state;
+    MemTracker* _mem_tracker;
+    ObjectPool* _pool;
+    // _wrapper is a runtime filter function wrapper
+    // _wrapper should alloc from _pool
+    RuntimePredicateWrapper* _wrapper;
+};
+
+/// LocalRuntimeFilter is only used in boardcast join
+class LocalRuntimeFilter {
+public:
+    LocalRuntimeFilter(RuntimeState* state, MemTracker* mem_tracker, ObjectPool* pool);
+    ~LocalRuntimeFilter();
     // prob_index corresponds to the index of _probe_expr_ctxs in the join node
     // hash_table_size is the size of the hash_table
     Status create_runtime_predicate(const RuntimeFilterParams* params);
@@ -111,6 +135,7 @@ struct MergeRuntimeFilterParams {
     const char* data;
 };
 
+/// The shuffle runtime filter is built from the join node.
 class ShuffleRuntimeFilter {
 public:
     ShuffleRuntimeFilter(RuntimeState* state, MemTracker* tracker, ObjectPool* pool);
@@ -192,7 +217,7 @@ private:
     ObjectPool* _pool;
 
     ExprContext* _build_ctx;
-    // prob_ctxs is a vector because some runtime filter will generate 
+    // prob_ctxs is a vector because some runtime filter will generate
     // multiple contexts such as minmax filter
     std::vector<ExprContext*> _prob_ctxs;
 

@@ -5,14 +5,24 @@
 #include "client_cache.h"
 #include "exprs/runtime_filter.h"
 #include "gen_cpp/internal_service.pb.h"
+#include "runtime/exec_env.h"
 #include "runtime/mem_tracker.h"
 #include "runtime/plan_fragment_executor.h"
 #include "runtime/runtime_filter_mgr.h"
 #include "runtime/runtime_state.h"
 #include "service/brpc.h"
+#include "util/brpc_stub_cache.h"
 #include "util/time.h"
 
 namespace doris {
+
+template <class RPCRequest, class RPCResponse>
+struct async_rpc_context {
+    RPCRequest request;
+    RPCResponse response;
+    brpc::Controller cntl;
+    brpc::CallId cid;
+};
 
 RuntimeFilterMgr::RuntimeFilterMgr(const UniqueId& query_id, RuntimeState* state) : _state(state) {}
 
@@ -76,12 +86,12 @@ Status RuntimeFilterMgr::update_filter(const PPublishFilterRequest* request, con
 }
 
 void RuntimeFilterMgr::set_runtime_filter_params(
-        const TPlanFragmentRuntimeFiltersParams& runtime_filter_params) {
-    this->_runtime_filter_params = runtime_filter_params;
+        const TRuntimeFilterParams& runtime_filter_params) {
+    this->merge_addr = runtime_filter_params.runtime_filter_merge_addr;
 }
 
 Status RuntimeFilterMgr::get_merge_addr(TNetworkAddress* addr) {
-    *addr = this->_runtime_filter_params.coord_merge_addr;
+    *addr = this->merge_addr;
     return Status::OK();
 }
 
@@ -139,50 +149,63 @@ Status RuntimeFilterMergeControllerEntity::merge(const PMergeFilterRequest* requ
         ShuffleRuntimeFilter runtime_filter(nullptr, tracker.get(), &pool);
         RETURN_IF_ERROR(runtime_filter.init_with_proto_param(&params));
         RETURN_IF_ERROR(cntVal->filter->merge_from(runtime_filter));
-        cntVal->arrive_id.insert(std::to_string(UnixMicros()));
+        cntVal->arrive_id.insert(UniqueId(request->fragment_id()).to_string());
         merged_size = cntVal->arrive_id.size();
     }
 
-    std::set<std::string> endpoints;
-    for (auto& entity : this->_runtimefilter_params.planid_to_addr) {
-        endpoints.insert(entity.second.hostname + std::to_string(entity.second.port));
-    }
-    LOG(INFO) << "merge size:" << merged_size << ",endpoint size:" << endpoints.size();
-    if (merged_size == endpoints.size()) {
-        for (const auto& kv : this->_runtimefilter_params.planid_to_addr) {
-            // kv.second
-            brpc::Controller cntl;
-            brpc::Channel channel;
-            if (channel.Init(kv.second.hostname.c_str(), kv.second.port, nullptr) != 0) {
-                LOG(WARNING) << "channel init err";
-                continue;
-            }
-            PPublishFilterRequest apply_request;
-            PPublishFilterResponse apply_response;
-            apply_request.set_filter_id(request->filter_id());
-            PBackendService_Stub stub(&channel);
-            if (cntVal->filter->type() == RuntimeFilterType::BLOOM_FILTER) {
-                apply_request.set_filter_type(PFilterType::BLOOM_FILTER);
-                *apply_request.mutable_query_id() = request->query_id();
-                void* data = nullptr;
-                int len = 0;
-                cntVal->filter->serialize(&apply_request, &data, &len);
-                cntl.request_attachment().append(data, len);
-            } else if (cntVal->filter->type() == RuntimeFilterType::MINMAX_FILTER) {
-                apply_request.set_filter_type(PFilterType::MINMAX_FILTER);
-                *apply_request.mutable_query_id() = request->query_id();
-                apply_request.mutable_minmax_filter()->set_column_type(
-                        PColumnType::COLUMN_TYPE_BIGINT);
-                cntVal->filter->serialize(&apply_request, nullptr, nullptr);
-            }
-            stub.apply_filter(&cntl, &apply_request, &apply_response, nullptr);
-            LOG(WARNING) << "apply_request:" << apply_request.ShortDebugString();
-            if (cntl.Failed()) {
-                LOG(WARNING) << "RPC apply_filter ERR:" << cntl.ErrorText();
-            }
+    const auto& param_iter =
+            this->_runtimefilter_params.rid_to_target_param.find(request->filter_id());
+    DCHECK(param_iter != this->_runtimefilter_params.rid_to_target_param.end());
+
+    LOG(INFO) << "merge size:" << merged_size;
+    if (merged_size == param_iter->second.size()) {
+        // prepare rpc context
+        using PPublishFilterRpcContext =
+                async_rpc_context<PPublishFilterRequest, PPublishFilterResponse>;
+        std::vector<std::unique_ptr<PPublishFilterRpcContext>> rpc_contexts;
+        rpc_contexts.reserve(param_iter->second.size());
+
+        butil::IOBuf request_attachment;
+
+        PPublishFilterRequest apply_request;
+        // serialize filter
+        void* data = nullptr;
+        int len = 0;
+        bool has_attachment = false;
+        RETURN_IF_ERROR(cntVal->filter->serialize(&apply_request, &data, &len));
+        if (data != nullptr && len > 0) {
+            request_attachment.append(data, len);
+            has_attachment = true;
         }
+
+        // async send publish rpc
+        std::vector<TRuntimeFilterTargetParams>& targets = param_iter->second;
+        for (size_t i = 0; i < targets.size(); i++) {
+            rpc_contexts.emplace_back(new PPublishFilterRpcContext);
+            rpc_contexts[i]->request = apply_request;
+            rpc_contexts[i]->request.set_filter_id(request->filter_id());
+            *rpc_contexts[i]->request.mutable_query_id() = request->query_id();
+            if (has_attachment) {
+                rpc_contexts[i]->cntl.request_attachment().append(request_attachment);
+            }
+
+            // set fragment-id
+            auto request_fragment_id = rpc_contexts[i]->request.mutable_fragment_id();
+            request_fragment_id->set_hi(targets[i].target_fragment_instance_id.hi);
+            request_fragment_id->set_lo(targets[i].target_fragment_instance_id.lo);
+
+            PBackendService_Stub* stub = ExecEnv::GetInstance()->brpc_stub_cache()->get_stub(
+                    targets[i].target_fragment_instance_addr);
+            LOG(INFO) << "send filter to:" << targets[i].target_fragment_instance_addr.hostname
+                      << ",endpoint size:" << targets[i].target_fragment_instance_addr.port;
+            if (stub == nullptr) {
+                rpc_contexts.pop_back();
+            }
+            stub->apply_filter(&rpc_contexts[i]->cntl, &rpc_contexts[i]->request,
+                               &rpc_contexts[i]->response, nullptr);
+        }
+        /// TODO: use async and join rpc
     }
-    // TODO: clear the cntl
     return Status::OK();
 }
 
@@ -204,6 +227,7 @@ Status RuntimeFilterMergeController::add_entity(
     } else {
         *handle = _filter_controller_map[query_id_str]->shared_from_this();
     }
+    /// TODO(stdpain):
     LOG(WARNING) << "add entity, query-id:" << query_id_str;
 
     std::shared_ptr<RuntimeFilterMergeControllerEntity>& filter_merge_controller = *handle;

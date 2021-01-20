@@ -73,7 +73,7 @@ public:
     // update filter by remote
     Status update_filter(const PPublishFilterRequest* request, const char* data);
 
-    void set_runtime_filter_params(const TPlanFragmentRuntimeFiltersParams& runtime_filter_params);
+    void set_runtime_filter_params(const TRuntimeFilterParams& runtime_filter_params);
 
     Status get_merge_addr(TNetworkAddress* addr);
 
@@ -90,15 +90,11 @@ private:
     // key: "filter-id"
     std::map<std::string, RuntimeFilterMgrVal> _filter_map;
 
-    // we use a single thread to scan time out filter
-    // std::mutex _thr_mutex;
-    // std::unique_ptr<std::thread> scan_thr;
-
     RuntimeState* _state;
     MemTracker* _tracker;
     ObjectPool _pool;
 
-    TPlanFragmentRuntimeFiltersParams _runtime_filter_params;
+    TNetworkAddress merge_addr;
 };
 
 // controller -> <query-id, entity>
@@ -107,12 +103,13 @@ class RuntimeFilterMergeControllerEntity
 public:
     RuntimeFilterMergeControllerEntity() : _query_id(0, 0) {}
     ~RuntimeFilterMergeControllerEntity() = default;
-
+    // TODO: use params from TRuntimeFilterParams
     Status init_from(UniqueId query_id, const std::vector<TPlanNode>& nodes);
 
+    // handle merge rpc
     Status merge(const PMergeFilterRequest* request, const char* data);
 
-    void set_filter_params(const TPlanFragmentRuntimeFiltersParams& params) {
+    void set_filter_params(const TRuntimeFilterParams& params) {
         if (!_has_params) {
             _runtimefilter_params = params;
             _has_params = true;
@@ -128,7 +125,7 @@ private:
         int64_t create_time;
         TRuntimeFilterDesc runtime_filter_desc;
         ShuffleRuntimeFilter* filter;
-        std::set<std::string> arrive_id; // fragment_id ?
+        std::unordered_set<std::string> arrive_id; // fragment_id ?
         std::shared_ptr<MemTracker> tracker;
         std::shared_ptr<ObjectPool> pool;
     };
@@ -136,7 +133,7 @@ private:
     // filter-id -> val
     std::mutex _filter_map_mutex;
     std::map<std::string, std::shared_ptr<RuntimeFilterCntlVal>> _filter_map;
-    TPlanFragmentRuntimeFiltersParams _runtimefilter_params;
+    TRuntimeFilterParams _runtimefilter_params;
     bool _has_params = false;
 };
 
