@@ -64,11 +64,11 @@ public:
     Status init();
 
     // get_filter is used in
-    Status get_consume_filter(const int filter_id, ShuffleRuntimeFilter** consumer_filter);
+    Status get_consume_filter(const int filter_id, IRuntimeFilter** consumer_filter);
 
-    Status get_producer_filter(const int filter_id, ShuffleRuntimeFilter** producer_filter);
+    Status get_producer_filter(const int filter_id, IRuntimeFilter** producer_filter);
     // regist filter
-    Status regist_filter(const int role, const TRuntimeFilterDesc& desc);
+    Status regist_filter(const int role, const TRuntimeFilterDesc& desc, int node_id = -1);
 
     // update filter by remote
     Status update_filter(const PPublishFilterRequest* request, const char* data);
@@ -78,17 +78,20 @@ public:
     Status get_merge_addr(TNetworkAddress* addr);
 
 private:
-    Status get_filter_by_role(const int filter_id, const int role, ShuffleRuntimeFilter** target);
+    Status get_filter_by_role(const int filter_id, const int role, IRuntimeFilter** target);
 
     struct RuntimeFilterMgrVal {
         int role; // reference to ROLE_*
         const TRuntimeFilterDesc* runtime_filter_desc;
-        ShuffleRuntimeFilter* filter;
+        IRuntimeFilter* filter;
     };
     // RuntimeFilterMgr is owned by RuntimeState, so we only
     // use filter_id as key
     // key: "filter-id"
-    std::map<std::string, RuntimeFilterMgrVal> _filter_map;
+    /// TODO: should it need protected by a mutex?
+    /// TODO: convert key to i32
+    std::map<std::string, RuntimeFilterMgrVal> _consumer_map;
+    std::map<std::string, RuntimeFilterMgrVal> _producer_map;
 
     RuntimeState* _state;
     MemTracker* _tracker;
@@ -119,7 +122,7 @@ private:
         int64_t create_time;
         TRuntimeFilterDesc runtime_filter_desc;
         std::vector<doris::TRuntimeFilterTargetParams> target_info;
-        ShuffleRuntimeFilter* filter;
+        IRuntimeFilter* filter;
         std::unordered_set<std::string> arrive_id; // fragment_instance_id ?
         std::shared_ptr<MemTracker> tracker;
         std::shared_ptr<ObjectPool> pool;

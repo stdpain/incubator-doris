@@ -35,43 +35,62 @@ Status RuntimeFilterMgr::init() {
 }
 
 Status RuntimeFilterMgr::get_filter_by_role(const int filter_id, const int role,
-                                            ShuffleRuntimeFilter** target) {
+                                            IRuntimeFilter** target) {
     std::string key = std::to_string(filter_id);
-    auto iter = _filter_map.find(key);
-    if (iter == _filter_map.end()) {
+    std::map<std::string, RuntimeFilterMgrVal>* filter_map = nullptr;
+
+    if (role == ROLE_CONSUMER) {
+        filter_map = &_consumer_map;
+    } else {
+        filter_map = &_producer_map;
+    }
+
+    auto iter = filter_map->find(key);
+    if (iter == filter_map->end()) {
         LOG(WARNING) << "unknown filter...:" << key;
         return Status::InvalidArgument("unknown filter");
-    }
-    if (iter->second.role != role) {
-        return Status::InvalidArgument("not expect role");
     }
     *target = iter->second.filter;
     return Status::OK();
 }
 
-Status RuntimeFilterMgr::get_consume_filter(const int filter_id,
-                                            ShuffleRuntimeFilter** consumer_filter) {
+Status RuntimeFilterMgr::get_consume_filter(const int filter_id, IRuntimeFilter** consumer_filter) {
     return get_filter_by_role(filter_id, ROLE_CONSUMER, consumer_filter);
 }
 
 Status RuntimeFilterMgr::get_producer_filter(const int filter_id,
-                                             ShuffleRuntimeFilter** producer_filter) {
+                                             IRuntimeFilter** producer_filter) {
     return get_filter_by_role(filter_id, ROLE_PRODUCER, producer_filter);
 }
 
-Status RuntimeFilterMgr::regist_filter(const int role, const TRuntimeFilterDesc& desc) {
+Status RuntimeFilterMgr::regist_filter(const int role, const TRuntimeFilterDesc& desc,
+                                       int node_id) {
+    DCHECK((role == ROLE_CONSUMER && node_id >= 0));
     std::string key = std::to_string(desc.filter_id);
-    auto iter = _filter_map.find(key);
-    if (iter != _filter_map.end()) {
+
+    std::map<std::string, RuntimeFilterMgrVal>* filter_map = nullptr;
+    if (role == ROLE_CONSUMER) {
+        filter_map = &_consumer_map;
+    } else {
+        filter_map = &_producer_map;
+    }
+
+    auto iter = filter_map->find(key);
+    if (iter != filter_map->end()) {
         return Status::InvalidArgument("filter has registed");
     }
+
     RuntimeFilterMgrVal filter_mgr_val;
     filter_mgr_val.role = role;
-    filter_mgr_val.runtime_filter_desc = &desc;
-    filter_mgr_val.filter = _pool.add(new ShuffleRuntimeFilter(_state, _tracker, &_pool));
+    filter_mgr_val.runtime_filter_desc = &desc; // dangerous
+
+    RETURN_IF_ERROR(IRuntimeFilter::create(_state, _tracker, &_pool, &desc, role, -1,
+                                           &filter_mgr_val.filter));
+
     filter_mgr_val.filter->set_role(role);
     filter_mgr_val.filter->init_with_desc(&desc);
-    _filter_map.emplace(key, filter_mgr_val);
+    filter_map->emplace(key, filter_mgr_val);
+
     return Status::OK();
 }
 
@@ -80,7 +99,7 @@ Status RuntimeFilterMgr::update_filter(const PPublishFilterRequest* request, con
     params.request = request;
     params.data = data;
     int filter_id = request->filter_id();
-    ShuffleRuntimeFilter* real_filter = nullptr;
+    IRuntimeFilter* real_filter = nullptr;
     RETURN_IF_ERROR(get_consume_filter(filter_id, &real_filter));
     return real_filter->update_filter(&params);
 }
@@ -106,6 +125,8 @@ Status RuntimeFilterMergeControllerEntity::_init_with_desc(
     cntVal->target_info = *target_info;
     cntVal->pool.reset(new ObjectPool());
     cntVal->tracker = MemTracker::CreateTracker();
+    if (runtime_filter_desc->is_broadcast_join) {
+    }
     cntVal->filter = cntVal->pool->add(
             new ShuffleRuntimeFilter(nullptr, cntVal->tracker.get(), cntVal->pool.get()));
 
@@ -150,8 +171,13 @@ Status RuntimeFilterMergeControllerEntity::merge(const PMergeFilterRequest* requ
         params.request = request;
         std::shared_ptr<MemTracker> tracker = iter->second->tracker;
         ObjectPool pool;
-        ShuffleRuntimeFilter runtime_filter(nullptr, tracker.get(), &pool);
-        RETURN_IF_ERROR(runtime_filter.init_with_proto_param(&params));
+        IRuntimeFilter* runtime_filter = nullptr;
+        if (cntVal->filter->is_broadcast_join()) {
+            runtime_filter = pool.add(new BoardCastRuntimeFilter(nullptr, tracker.get(), &pool));
+        } else {
+            runtime_filter = pool.add(new ShuffleRuntimeFilter(nullptr, tracker.get(), &pool));
+        }
+        RETURN_IF_ERROR(runtime_filter->init_with_proto_param(&params));
         RETURN_IF_ERROR(cntVal->filter->merge_from(runtime_filter));
         cntVal->arrive_id.insert(UniqueId(request->fragment_id()).to_string());
         merged_size = cntVal->arrive_id.size();

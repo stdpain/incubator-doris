@@ -665,6 +665,7 @@ struct TAssertNumRowsNode {
 enum TRuntimeFilterType {
   BLOOM = 0
   MIN_MAX = 1
+  IN = 2
 }
 
 // Specification of a runtime filter.
@@ -681,12 +682,24 @@ struct TRuntimeFilterDesc {
   // Map of target node id to the target expr
   4: required map<Types.TPlanNodeId, Exprs.TExpr> planId_to_target_expr
 
+  // Indicates if the source join node of this filter is a broadcast or
+  // a partitioned join.
+  5: required bool is_broadcast_join
+
+  // Indicates if there is at least one target scan node that is in the
+  // same fragment as the broadcast join that produced the runtime filter
+  6: required bool has_local_targets
+
+  // Indicates if there is at least one target scan node that is not in the same
+  // fragment as the broadcast join that produced the runtime filter
+  7: required bool has_remote_targets
+
   // The type of runtime filter to build.
-  5: required TRuntimeFilterType type
+  8: required TRuntimeFilterType type
 
   // The size of the filter based on the ndv estimate and the min/max limit specified in
   // the query options. Should be greater than zero for bloom filters, zero otherwise.
-  6: optional i64 bloom_filter_size_bytes
+  9: optional i64 bloom_filter_size_bytes
 }
 
 

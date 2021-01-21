@@ -51,7 +51,7 @@ Status ShuffleRuntimeFilter::push_to_remote(RuntimeState* state, const TNetworkA
     pfragment_instance_id->set_hi(state->fragment_instance_id().hi);
     pfragment_instance_id->set_lo(state->fragment_instance_id().lo);
 
-    _rpc_context->request.set_filter_id(_runtime_filter_desc->filter_id);
+    _rpc_context->request.set_filter_id(_filter_id);
     _rpc_context->cntl.set_timeout_ms(1000);
 
     RETURN_IF_ERROR(serialize(&_rpc_context->request, &data, &len));
@@ -68,7 +68,6 @@ Status ShuffleRuntimeFilter::push_to_remote(RuntimeState* state, const TNetworkA
 
 Status ShuffleRuntimeFilter::join_rpc() {
     DCHECK(is_producer());
-    producer_close();
     if (_rpc_context != nullptr) {
         brpc::Join(_rpc_context->cid);
         if (_rpc_context->cntl.Failed()) {

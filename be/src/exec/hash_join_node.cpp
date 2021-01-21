@@ -195,7 +195,7 @@ Status HashJoinNode::construct_hash_table(RuntimeState* state) {
     RETURN_IF_ERROR(child(1)->open(state));
 
     SCOPED_TIMER(_build_timer);
-    DeferOp defer([&]{
+    DeferOp defer([&] {
         COUNTER_SET(_build_rows_counter, _hash_tbl->size());
         COUNTER_SET(_build_buckets_counter, _hash_tbl->num_buckets());
         COUNTER_SET(_hash_tbl_load_factor_counter, _hash_tbl->load_factor());
@@ -227,10 +227,7 @@ Status HashJoinNode::construct_hash_table(RuntimeState* state) {
     return Status::OK();
 }
 
-void HashJoinNode::handle_runtime_filter(bool is_shuffle, boost::promise<Status>& status) {
-    
-
-}
+void HashJoinNode::handle_runtime_filter(bool is_shuffle, boost::promise<Status>& status) {}
 
 Status HashJoinNode::open(RuntimeState* state) {
     RETURN_IF_ERROR(ExecNode::open(state));
@@ -257,12 +254,9 @@ Status HashJoinNode::open(RuntimeState* state) {
         thread_status.set_value(construct_hash_table(state));
     }
 
-    bool is_shuffle_join = false;
-
     if (_children[0]->type() == TPlanNodeType::EXCHANGE_NODE &&
         _children[1]->type() == TPlanNodeType::EXCHANGE_NODE) {
         _is_push_down = true;
-        is_shuffle_join = true;
     }
 
     // The predicate could not be pushed down when there is Null-safe equal operator.
@@ -274,135 +268,20 @@ Status HashJoinNode::open(RuntimeState* state) {
         _is_push_down = false;
     }
 
-    bool use_runtime_filter = state->enable_runtime_filter_mode();
-    if (_is_push_down && is_shuffle_join) {
-        RETURN_IF_ERROR(thread_status.get_future().get());
-        if (use_runtime_filter) {
-            std::vector<ShuffleRuntimeFilter*> shuffle_runtime_filter_list;
-            shuffle_runtime_filter_list.reserve(_runtime_filter_descs.size());
-            for (const auto& filter_desc : _runtime_filter_descs) {
-                ShuffleRuntimeFilter* shuffle_runtime_filter = nullptr;
-                state->runtime_filter_mgr()->get_producer_filter(filter_desc.filter_id,
-                                                                 &shuffle_runtime_filter);
-                if (shuffle_runtime_filter != nullptr) {
-                    shuffle_runtime_filter_list.push_back(shuffle_runtime_filter);
-                    RETURN_IF_ERROR(shuffle_runtime_filter->producer_init());
-                    RETURN_IF_ERROR(shuffle_runtime_filter->producer_prepare(child(1)->row_desc()));
-                }
-            }
-            {
-                SCOPED_TIMER(_push_compute_timer);
-                HashTable::Iterator iter = _hash_tbl->begin();
+    // Open the probe-side child so that it may perform any initialisation in parallel.
+    // Don't exit even if we see an error, we still need to wait for the build thread
+    // to finish.
+    Status open_status = child(0)->open(state);
 
-                while (iter.has_next()) {
-                    TupleRow* row = iter.get_row();
-                    for (auto filter : shuffle_runtime_filter_list) {
-                        filter->insert(row);
-                    }
-                    iter.next<false>();
-                }
-            }
-            COUNTER_UPDATE(_build_timer, _push_compute_timer->value());
+    // Blocks until ConstructHashTable has returned, after which
+    // the hash table is fully constructed and we can start the probe
+    // phase.
+    RETURN_IF_ERROR(thread_status.get_future().get());
 
-            SCOPED_TIMER(_push_down_timer);
-            // publish filter
-            // BrpcStubCache brpc_service_stub;
-            for (auto filter : shuffle_runtime_filter_list) {
-                TNetworkAddress addr;
-                state->runtime_filter_mgr()->get_merge_addr(&addr);
-                // push_to_remote return was always true ... 
-                // because push_to_remote is a async rpc
-                filter->push_to_remote(state, &addr);
-            }
-            for (auto filter : shuffle_runtime_filter_list) {
-                filter->join_rpc();
-            }
-        }
-        Status open_status = child(0)->open(state);
-        RETURN_IF_ERROR(open_status);
-
-    } else if (_is_push_down && !is_shuffle_join) {
-        // Blocks until ConstructHashTable has returned, after which
-        // the hash table is fully constructed and we can start the probe
-        // phase.
-        RETURN_IF_ERROR(thread_status.get_future().get());
-
-        if (_hash_tbl->size() == 0 && _join_op == TJoinOp::INNER_JOIN) {
-            // Hash table size is zero
-            LOG(INFO) << "No element need to push down, no need to read probe table";
-            RETURN_IF_ERROR(child(0)->open(state));
-            _probe_batch_pos = 0;
-            _hash_tbl_iterator = _hash_tbl->begin();
-            _eos = true;
-            return Status::OK();
-        }
-
-        _is_push_down = state->enable_runtime_filter_mode();
-
-        if (_is_push_down) {
-            LocalRuntimeFilter runtime_filter(state, expr_mem_tracker().get(), _pool);
-            for (int i = 0; i < _probe_expr_ctxs.size(); ++i) {
-                if (_hash_tbl->size() <= config::runtime_filter_max_in_num) {
-                    RuntimeFilterParams in_filter_params(RuntimeFilterType::IN_FILTER, i,
-                                                         _probe_expr_ctxs[i], _hash_tbl->size());
-                    runtime_filter.create_runtime_predicate(&in_filter_params);
-                } else {
-                    RuntimeFilterParams bloom_filter_params(RuntimeFilterType::BLOOM_FILTER, i,
-                                                            _probe_expr_ctxs[i], _hash_tbl->size());
-                    runtime_filter.create_runtime_predicate(&bloom_filter_params);
-
-                    RuntimeFilterParams minmax_filter_params(RuntimeFilterType::MINMAX_FILTER, i,
-                                                             _probe_expr_ctxs[i],
-                                                             _hash_tbl->size());
-                    runtime_filter.create_runtime_predicate(&minmax_filter_params);
-                }
-            }
-
-            {
-                SCOPED_TIMER(_push_compute_timer);
-                HashTable::Iterator iter = _hash_tbl->begin();
-
-                while (iter.has_next()) {
-                    TupleRow* row = iter.get_row();
-
-                    for (int i = 0; i < _build_expr_ctxs.size(); ++i) {
-                        //TODO may be we could use the the result from hash table
-                        // to reduce caculate build_expr_ctxs
-                        void* val = _build_expr_ctxs[i]->get_value(row);
-                        runtime_filter.insert(i, val);
-                    }
-
-                    iter.next<false>();
-                }
-            }
-            COUNTER_UPDATE(_build_timer, _push_compute_timer->value());
-
-            SCOPED_TIMER(_push_down_timer);
-            runtime_filter.get_push_expr_ctxs(&_push_down_expr_ctxs);
-            push_down_predicate(state, &_push_down_expr_ctxs);
-        }
-
-        // Open the probe-side child so that it may perform any initialisation in parallel.
-        // Don't exit even if we see an error, we still need to wait for the build thread
-        // to finish.
-        Status open_status = child(0)->open(state);
-        RETURN_IF_ERROR(open_status);
-    } else {
-        // Open the probe-side child so that it may perform any initialisation in parallel.
-        // Don't exit even if we see an error, we still need to wait for the build thread
-        // to finish.
-        Status open_status = child(0)->open(state);
-
-        // Blocks until ConstructHashTable has returned, after which
-        // the hash table is fully constructed and we can start the probe
-        // phase.
-        RETURN_IF_ERROR(thread_status.get_future().get());
-
-        // ISSUE-1247, check open_status after buildThread execute.
-        // If this return first, build thread will use 'thread_status'
-        // which is already destructor and then coredump.
-        RETURN_IF_ERROR(open_status);
-    }
+    // ISSUE-1247, check open_status after buildThread execute.
+    // If this return first, build thread will use 'thread_status'
+    // which is already destructor and then coredump.
+    RETURN_IF_ERROR(open_status);
 
     // seed probe batch and _current_probe_row, etc.
     while (true) {

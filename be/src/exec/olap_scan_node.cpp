@@ -86,7 +86,8 @@ Status OlapScanNode::init(const TPlanNode& tnode, RuntimeState* state) {
 
     /// TODO: could one filter used in the different scan_node ?
     for (const auto& filter_desc : _runtime_filter_descs) {
-        RETURN_IF_ERROR(state->runtime_filter_mgr()->regist_filter(ROLE_CONSUMER, filter_desc));
+        RETURN_IF_ERROR(
+                state->runtime_filter_mgr()->regist_filter(ROLE_CONSUMER, filter_desc, id()));
     }
     _runtime_filter_pushed_marks.resize(_runtime_filter_descs.size(), false);
 
@@ -192,22 +193,21 @@ Status OlapScanNode::open(RuntimeState* state) {
     std::list<ExprContext*> expr_context;
     for (size_t i = 0; i < _runtime_filter_descs.size(); ++i) {
         auto& filter_desc = _runtime_filter_descs[i];
-        ShuffleRuntimeFilter* shuffle_runtime_filter = nullptr;
-        state->runtime_filter_mgr()->get_consume_filter(filter_desc.filter_id,
-                                                        &shuffle_runtime_filter);
-        if (shuffle_runtime_filter == nullptr) {
+        IRuntimeFilter* runtime_filter = nullptr;
+        state->runtime_filter_mgr()->get_consume_filter(filter_desc.filter_id, &runtime_filter);
+        if (runtime_filter == nullptr) {
             continue;
         }
         if (state->enable_runtime_filter_mode()) {
-            bool ready = shuffle_runtime_filter->is_ready();
+            bool ready = runtime_filter->is_ready();
             if (!ready) {
                 int64_t start_time = UnixMillis();
-                ready = shuffle_runtime_filter->await();
+                ready = runtime_filter->await();
                 int64_t end_time = UnixMillis();
                 LOG(INFO) << "runtime filter wait time:" << end_time - start_time << "ms";
             }
             if (ready) {
-                RETURN_IF_ERROR(shuffle_runtime_filter->get_push_expr_ctxs(&expr_context));
+                RETURN_IF_ERROR(runtime_filter->get_push_expr_ctxs(&expr_context));
                 _runtime_filter_pushed_marks[i] = true;
             }
         }
@@ -367,11 +367,10 @@ Status OlapScanNode::close(RuntimeState* state) {
     }
 
     for (auto& filter_desc : _runtime_filter_descs) {
-        ShuffleRuntimeFilter* shuffle_runtime_filter = nullptr;
-        state->runtime_filter_mgr()->get_consume_filter(filter_desc.filter_id,
-                                                        &shuffle_runtime_filter);
-        DCHECK(shuffle_runtime_filter != nullptr);
-        shuffle_runtime_filter->consumer_close();
+        IRuntimeFilter* runtime_filter = nullptr;
+        state->runtime_filter_mgr()->get_consume_filter(filter_desc.filter_id, &runtime_filter);
+        DCHECK(runtime_filter != nullptr);
+        runtime_filter->consumer_close();
     }
 
     VLOG(1) << "OlapScanNode::close()";
@@ -1320,15 +1319,13 @@ void OlapScanNode::scanner_thread(OlapScanner* scanner) {
     DCHECK(scanner_filter_apply_marks.size() == _runtime_filter_descs.size());
     for (size_t i = 0; i < scanner_filter_apply_marks.size(); i++) {
         if (!scanner_filter_apply_marks[i] && !_runtime_filter_pushed_marks[i]) {
-            ShuffleRuntimeFilter* shuffle_runtime_filter = nullptr;
+            IRuntimeFilter* runtime_filter = nullptr;
             state->runtime_filter_mgr()->get_consume_filter(_runtime_filter_descs[i].filter_id,
-                                                            &shuffle_runtime_filter);
-            DCHECK(shuffle_runtime_filter != nullptr);
-            bool ready = shuffle_runtime_filter->is_ready();
-            // shuffle_runtime_filter->await();
+                                                            &runtime_filter);
+            DCHECK(runtime_filter != nullptr);
+            bool ready = runtime_filter->is_ready();
             if (ready) {
-                shuffle_runtime_filter->get_push_expr_ctxs(&contexts, row_desc(),
-                                                           _expr_mem_tracker);
+                runtime_filter->get_prepared_context(&contexts, row_desc(), _expr_mem_tracker);
                 scanner_filter_apply_marks[i] = true;
             }
         }
