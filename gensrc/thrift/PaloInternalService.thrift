@@ -164,6 +164,7 @@ struct TRuntimeFilterTargetParams {
   // The address of the instance where the fragment is expected to run
   2: required Types.TNetworkAddress target_fragment_instance_addr
 }
+
 struct TRuntimeFilterParams {
   // Runtime filter merge instance address
   1: optional Types.TNetworkAddress runtime_filter_merge_addr

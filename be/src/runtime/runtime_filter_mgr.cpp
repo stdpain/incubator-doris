@@ -96,12 +96,14 @@ Status RuntimeFilterMgr::get_merge_addr(TNetworkAddress* addr) {
 }
 
 Status RuntimeFilterMergeControllerEntity::_init_with_desc(
-        const TRuntimeFilterDesc* runtime_filter_desc) {
+        const TRuntimeFilterDesc* runtime_filter_desc,
+        const std::vector<doris::TRuntimeFilterTargetParams>* target_info) {
     std::lock_guard<std::mutex> guard(_filter_map_mutex);
     std::shared_ptr<RuntimeFilterCntlVal> cntVal = std::make_shared<RuntimeFilterCntlVal>();
-    // We don’t know when runtime_filter_desc will be released,
+    // runtime_filter_desc and target will be released,
     // so we need to copy to cntVal
     cntVal->runtime_filter_desc = *runtime_filter_desc;
+    cntVal->target_info = *target_info;
     cntVal->pool.reset(new ObjectPool());
     cntVal->tracker = MemTracker::CreateTracker();
     cntVal->filter = cntVal->pool->add(
@@ -114,15 +116,17 @@ Status RuntimeFilterMergeControllerEntity::_init_with_desc(
     return Status::OK();
 }
 
-Status RuntimeFilterMergeControllerEntity::init_from(UniqueId query_id,
-                                                     const std::vector<TPlanNode>& nodes) {
+Status RuntimeFilterMergeControllerEntity::init(UniqueId query_id,
+                                                const TRuntimeFilterParams& runtime_filter_params) {
     _query_id = query_id;
-    for (auto& node : nodes) {
-        if (node.node_type == TPlanNodeType::HASH_JOIN_NODE) {
-            for (auto& filter : node.runtime_filters) {
-                _init_with_desc(&filter);
-            }
+    for (auto& filterid_to_desc : runtime_filter_params.rid_to_runtime_filter) {
+        int filter_id = filterid_to_desc.first;
+        const auto& target_iter = runtime_filter_params.rid_to_target_param.find(filter_id);
+        if (target_iter == runtime_filter_params.rid_to_target_param.end()) {
+            return Status::InternalError("runtime filter params meet error");
         }
+        _init_with_desc(&filterid_to_desc.second, &target_iter->second);
+        // target_iter->second
     }
     return Status::OK();
 }
@@ -153,17 +157,13 @@ Status RuntimeFilterMergeControllerEntity::merge(const PMergeFilterRequest* requ
         merged_size = cntVal->arrive_id.size();
     }
 
-    const auto& param_iter =
-            this->_runtimefilter_params.rid_to_target_param.find(request->filter_id());
-    DCHECK(param_iter != this->_runtimefilter_params.rid_to_target_param.end());
-
     LOG(INFO) << "merge size:" << merged_size;
-    if (merged_size == param_iter->second.size()) {
+    if (merged_size == cntVal->target_info.size()) {
         // prepare rpc context
         using PPublishFilterRpcContext =
                 async_rpc_context<PPublishFilterRequest, PPublishFilterResponse>;
         std::vector<std::unique_ptr<PPublishFilterRpcContext>> rpc_contexts;
-        rpc_contexts.reserve(param_iter->second.size());
+        rpc_contexts.reserve(cntVal->target_info.size());
 
         butil::IOBuf request_attachment;
 
@@ -179,7 +179,7 @@ Status RuntimeFilterMergeControllerEntity::merge(const PMergeFilterRequest* requ
         }
 
         // async send publish rpc
-        std::vector<TRuntimeFilterTargetParams>& targets = param_iter->second;
+        std::vector<TRuntimeFilterTargetParams>& targets = cntVal->target_info;
         for (size_t i = 0; i < targets.size(); i++) {
             rpc_contexts.emplace_back(new PPublishFilterRpcContext);
             rpc_contexts[i]->request = apply_request;
@@ -231,9 +231,11 @@ Status RuntimeFilterMergeController::add_entity(
     LOG(WARNING) << "add entity, query-id:" << query_id_str;
 
     std::shared_ptr<RuntimeFilterMergeControllerEntity>& filter_merge_controller = *handle;
-    // params.fragment.plan.nodes
-    RETURN_IF_ERROR(filter_merge_controller->init_from(query_id, params.fragment.plan.nodes));
-    filter_merge_controller->set_filter_params(params.params.runtime_filter_params);
+
+    const TRuntimeFilterParams& filter_params = params.params.runtime_filter_params;
+    if (params.params.__isset.runtime_filter_params) {
+        RETURN_IF_ERROR(filter_merge_controller->init(query_id, filter_params));
+    }
     return Status::OK();
 }
 

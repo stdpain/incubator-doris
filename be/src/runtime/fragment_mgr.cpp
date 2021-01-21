@@ -524,7 +524,7 @@ Status FragmentMgr::exec_plan_fragment(const TExecPlanFragmentParams& params, Fi
                                                params.params.fragment_instance_id,
                                                params.backend_num, _exec_env, fragments_ctx));
     }
-    
+
     std::shared_ptr<RuntimeFilterMergeControllerEntity> handler;
     _runtimefilter_controller.add_entity(params, &handler);
     exec_state->set_merge_controller_handler(handler);
@@ -753,26 +753,25 @@ Status FragmentMgr::exec_external_plan_fragment(const TScanOpenParams& params,
 }
 
 Status FragmentMgr::apply_filter(const PPublishFilterRequest* request, const char* data) {
-    UniqueId query_id = request->query_id();
-    bool handle = false;
+    UniqueId fragment_instance_id = request->fragment_id();
+    TUniqueId tfragment_instance_id = fragment_instance_id.to_thrift();
+    std::shared_ptr<FragmentExecState> fragment_state;
+    
     {
         std::lock_guard<std::mutex> lock(_lock);
-        for (auto kv : _fragment_map) {
-            if (query_id == kv.second->query_id()) {
-                std::shared_ptr<FragmentExecState> fragment_state;
-                fragment_state = kv.second;
-                RuntimeFilterMgr* runtime_filter_mgr =
-                        fragment_state->executor()->runtime_state()->runtime_filter_mgr();
-                Status st = runtime_filter_mgr->update_filter(request, data);
-                handle = true;
-                LOG(INFO) << "apply filter state " << st.to_string();
-            }
+        auto iter = _fragment_map.find(tfragment_instance_id);
+        if (iter == _fragment_map.end()) {
+            LOG(WARNING) << "unknown.... fragment-id:" << fragment_instance_id;
+            return Status::InvalidArgument("fragment-id");
         }
+        fragment_state = iter->second;
     }
-    if (!handle) {
-        LOG(WARNING) << "unknown.... queryid";
-        return Status::InvalidArgument("unknown queryid");
-    }
+    DCHECK(fragment_state != nullptr);
+    RuntimeFilterMgr* runtime_filter_mgr =
+            fragment_state->executor()->runtime_state()->runtime_filter_mgr();
+    
+    Status st = runtime_filter_mgr->update_filter(request, data);
+    LOG(INFO) << "apply filter state " << st.to_string();
     return Status::OK();
 }
 

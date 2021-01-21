@@ -103,38 +103,32 @@ class RuntimeFilterMergeControllerEntity
 public:
     RuntimeFilterMergeControllerEntity() : _query_id(0, 0) {}
     ~RuntimeFilterMergeControllerEntity() = default;
-    // TODO: use params from TRuntimeFilterParams
-    Status init_from(UniqueId query_id, const std::vector<TPlanNode>& nodes);
+
+    Status init(UniqueId query_id, const TRuntimeFilterParams& runtime_filter_params);
 
     // handle merge rpc
     Status merge(const PMergeFilterRequest* request, const char* data);
 
-    void set_filter_params(const TRuntimeFilterParams& params) {
-        if (!_has_params) {
-            _runtimefilter_params = params;
-            _has_params = true;
-        }
-    }
-
     UniqueId query_id() { return _query_id; }
 
 private:
-    Status _init_with_desc(const TRuntimeFilterDesc* runtime_filter_desc);
+    Status _init_with_desc(const TRuntimeFilterDesc* runtime_filter_desc,
+                           const std::vector<doris::TRuntimeFilterTargetParams>* target_info);
 
     struct RuntimeFilterCntlVal {
         int64_t create_time;
         TRuntimeFilterDesc runtime_filter_desc;
+        std::vector<doris::TRuntimeFilterTargetParams> target_info;
         ShuffleRuntimeFilter* filter;
-        std::unordered_set<std::string> arrive_id; // fragment_id ?
+        std::unordered_set<std::string> arrive_id; // fragment_instance_id ?
         std::shared_ptr<MemTracker> tracker;
         std::shared_ptr<ObjectPool> pool;
     };
     UniqueId _query_id;
-    // filter-id -> val
+    // protect _filter_map
     std::mutex _filter_map_mutex;
+    // filter-id -> val
     std::map<std::string, std::shared_ptr<RuntimeFilterCntlVal>> _filter_map;
-    TRuntimeFilterParams _runtimefilter_params;
-    bool _has_params = false;
 };
 
 //
