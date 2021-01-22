@@ -42,6 +42,7 @@ class PMergeFilterRequest;
 class TRuntimeFilterDesc;
 class RowDescriptor;
 class PMinMaxFilter;
+class HashJoinNode;
 
 enum class RuntimeFilterType {
     UNKNOWN_FILTER = -1,
@@ -104,9 +105,6 @@ public:
     // only used for producer
     virtual void insert(void* data);
 
-    // prepare something before insert
-    virtual void prepare() {};
-
     // publish filter
     // push filter to remote node or push down it to scan_node
     virtual void publish() {};
@@ -153,10 +151,12 @@ public:
     Status serialize(PMergeFilterRequest* request, void** data, int* len);
     Status serialize(PPublishFilterRequest* request, void** data = nullptr, int* len = nullptr);
 
-    Status merge_from(const IRuntimeFilter* shuffle_runtime_filter);
+    Status merge_from(const RuntimePredicateWrapper* wrapper);
 
-    Status init_with_proto_param(const MergeRuntimeFilterParams* param);
-    Status init_with_proto_param(const UpdateRuntimeFilterParams* param);
+    static Status create_wrapper(const MergeRuntimeFilterParams* param, MemTracker* tracker,
+                                 ObjectPool* pool, RuntimePredicateWrapper** wrapper);
+    static Status create_wrapper(const UpdateRuntimeFilterParams* param, MemTracker* tracker,
+                                 ObjectPool* pool, RuntimePredicateWrapper** wrapper);
 
     virtual Status update_filter(const UpdateRuntimeFilterParams* param) = 0;
 
@@ -171,7 +171,8 @@ protected:
     Status _serialize(T* request, void** data, int* len);
 
     template <class T>
-    Status _init_with_proto_param(const T* param);
+    static Status _create_wrapper(const T* param, MemTracker* tracker, ObjectPool* pool,
+                                  RuntimePredicateWrapper** wrapper);
 
 protected:
     RuntimeState* _state;
@@ -288,8 +289,7 @@ public:
     }
 
     // publish runtime filter
-    // Status publish();
-
+    void publish(HashJoinNode* hash_join_node);
 
 private:
     const std::vector<ExprContext*>& _probe_expr_context;

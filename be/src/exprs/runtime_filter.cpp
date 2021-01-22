@@ -31,9 +31,9 @@
 #include "exprs/predicate.h"
 #include "gen_cpp/internal_service.pb.h"
 #include "gen_cpp/types.pb.h"
+#include "runtime/runtime_filter_mgr.h"
 #include "runtime/runtime_state.h"
 #include "runtime/type_limit.h"
-#include "runtime/runtime_filter_mgr.h"
 #include "util/string_parser.hpp"
 
 namespace doris {
@@ -548,6 +548,10 @@ public:
     }
 
     Status merge(const RuntimePredicateWrapper* wrapper) {
+        DCHECK(_filter_type == wrapper->_filter_type);
+        if (_filter_type != wrapper->_filter_type) {
+            return Status::InvalidArgument("invalid filter type");
+        }
         switch (_filter_type) {
         case RuntimeFilterType::IN_FILTER: {
             DCHECK(false) << "in filter should't apply in shuffle join";
@@ -803,40 +807,38 @@ Status IRuntimeFilter::serialize(PPublishFilterRequest* request, void** data, in
     return _serialize(request, data, len);
 }
 
-Status IRuntimeFilter::init_with_proto_param(const MergeRuntimeFilterParams* param) {
-    return _init_with_proto_param(param);
+Status IRuntimeFilter::create_wrapper(const MergeRuntimeFilterParams* param, MemTracker* tracker,
+                                      ObjectPool* pool, RuntimePredicateWrapper** wrapper) {
+    return _create_wrapper(param, tracker, pool, wrapper);
 }
 
-Status IRuntimeFilter::init_with_proto_param(const UpdateRuntimeFilterParams* param) {
-    return _init_with_proto_param(param);
+Status IRuntimeFilter::create_wrapper(const UpdateRuntimeFilterParams* param, MemTracker* tracker,
+                                      ObjectPool* pool, RuntimePredicateWrapper** wrapper) {
+    return _create_wrapper(param, tracker, pool, wrapper);
 }
 
 template <class T>
-Status IRuntimeFilter::_init_with_proto_param(const T* param) {
+Status IRuntimeFilter::_create_wrapper(const T* param, MemTracker* tracker, ObjectPool* pool,
+                                       RuntimePredicateWrapper** wrapper) {
     int filter_type = param->request->filter_type();
-    _wrapper = _pool->add(new RuntimePredicateWrapper(_mem_tracker, _pool, get_type(filter_type)));
+    *wrapper = pool->add(new RuntimePredicateWrapper(tracker, pool, get_type(filter_type)));
 
     switch (filter_type) {
     case PFilterType::BLOOM_FILTER: {
-        _runtime_filter_type = RuntimeFilterType::BLOOM_FILTER;
         DCHECK(param->request->has_bloom_filter());
-        return _wrapper->assign(&param->request->bloom_filter(), param->data);
+        return (*wrapper)->assign(&param->request->bloom_filter(), param->data);
     }
     case PFilterType::MINMAX_FILTER: {
-        _runtime_filter_type = RuntimeFilterType::MINMAX_FILTER;
         DCHECK(param->request->has_minmax_filter());
-        return _wrapper->assign(&param->request->minmax_filter());
+        return (*wrapper)->assign(&param->request->minmax_filter());
     }
     default:
         return Status::InvalidArgument("unknow filter type");
     }
 }
 
-Status IRuntimeFilter::merge_from(const IRuntimeFilter* runtime_filter) {
-    if (runtime_filter->type() != type()) {
-        return Status::InvalidArgument("filter type error");
-    }
-    return _wrapper->merge(runtime_filter->_wrapper);
+Status IRuntimeFilter::merge_from(const RuntimePredicateWrapper* wrapper) {
+    return _wrapper->merge(wrapper);
 }
 
 template <class T>
@@ -975,9 +977,9 @@ Status ShuffleRuntimeFilter::update_filter(const UpdateRuntimeFilterParams* para
     std::shared_ptr<MemTracker> tracker = MemTracker::CreateTracker();
     ObjectPool pool;
     // TODO:
-    ShuffleRuntimeFilter filter(nullptr, tracker.get(), &pool);
-    RETURN_IF_ERROR(filter.init_with_proto_param(param));
-    RETURN_IF_ERROR(_wrapper->merge(filter._wrapper));
+    RuntimePredicateWrapper* wrapper = nullptr;
+    RETURN_IF_ERROR(IRuntimeFilter::create_wrapper(param, tracker.get(), &pool, &wrapper));
+    RETURN_IF_ERROR(_wrapper->merge(wrapper));
     this->signal();
     return Status::OK();
 }
@@ -1011,6 +1013,14 @@ Status RuntimeFilterSlots::init(RuntimeState* state, ObjectPool* pool, MemTracke
         _runtime_filters[runtime_filter->expr_order()].push_back(runtime_filter);
     }
     return Status::OK();
+}
+
+void RuntimeFilterSlots::publish(HashJoinNode* hash_join_node) {
+    for (auto& pair : _runtime_filters) {
+        for (auto filter : pair.second) {
+            filter->publish();
+        }
+    }
 }
 
 } // namespace doris

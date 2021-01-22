@@ -171,14 +171,10 @@ Status RuntimeFilterMergeControllerEntity::merge(const PMergeFilterRequest* requ
         params.request = request;
         std::shared_ptr<MemTracker> tracker = iter->second->tracker;
         ObjectPool pool;
-        IRuntimeFilter* runtime_filter = nullptr;
-        if (cntVal->filter->is_broadcast_join()) {
-            runtime_filter = pool.add(new BoardCastRuntimeFilter(nullptr, tracker.get(), &pool));
-        } else {
-            runtime_filter = pool.add(new ShuffleRuntimeFilter(nullptr, tracker.get(), &pool));
-        }
-        RETURN_IF_ERROR(runtime_filter->init_with_proto_param(&params));
-        RETURN_IF_ERROR(cntVal->filter->merge_from(runtime_filter));
+        RuntimePredicateWrapper* wrapper = nullptr;
+        RETURN_IF_ERROR(IRuntimeFilter::create_wrapper(&params, tracker.get(), &pool, &wrapper));
+        // TODO: wrapper
+        RETURN_IF_ERROR(cntVal->filter->merge_from(wrapper));
         cntVal->arrive_id.insert(UniqueId(request->fragment_id()).to_string());
         merged_size = cntVal->arrive_id.size();
     }
