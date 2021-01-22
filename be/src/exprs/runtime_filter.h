@@ -94,7 +94,10 @@ public:
               _expr_order(-1),
               _always_true(false),
               _probe_ctx(nullptr),
-              _pushdown_status(false) {}
+              _pushdown_status(false),
+              _regist_time(0),
+              _effect_time(0),
+              _await_time_cost(0) {}
 
     virtual ~IRuntimeFilter() = default;
 
@@ -142,6 +145,7 @@ public:
     // if filter is not ready for filter data scan_node
     // will wait util it ready or timeout
     // This function will wait at most config::runtime_filter_shuffle_wait_time_ms
+    // if return true , filter is ready to use
     bool await();
     // this function will be called if a runtime filter sent by rpc
     // it will nodify all wait threads
@@ -232,6 +236,11 @@ protected:
 
     struct rpc_context;
     std::shared_ptr<rpc_context> _rpc_context;
+    
+    // UnixMillis
+    int64_t _regist_time;
+    int64_t _effect_time;
+    int64_t _await_time_cost;
 };
 
 /// LocalRuntimeFilter is only used in boardcast join

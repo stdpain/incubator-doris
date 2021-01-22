@@ -74,7 +74,7 @@ Status RuntimeFilterMgr::regist_filter(const int role, const TRuntimeFilterDesc&
     } else {
         filter_map = &_producer_map;
     }
-    LOG(WARNING) << "regist filter...:" << key << ",role:" << role;
+    // LOG(INFO) << "regist filter...:" << key << ",role:" << role;
 
     auto iter = filter_map->find(key);
     if (iter != filter_map->end()) {
@@ -105,12 +105,17 @@ Status RuntimeFilterMgr::update_filter(const PPublishFilterRequest* request, con
 
 void RuntimeFilterMgr::set_runtime_filter_params(
         const TRuntimeFilterParams& runtime_filter_params) {
-    this->merge_addr = runtime_filter_params.runtime_filter_merge_addr;
+    this->_merge_addr = runtime_filter_params.runtime_filter_merge_addr;
+    this->_has_merge_addr = true;
 }
 
 Status RuntimeFilterMgr::get_merge_addr(TNetworkAddress* addr) {
-    *addr = this->merge_addr;
-    return Status::OK();
+    DCHECK(_has_merge_addr);
+    if (_has_merge_addr) {
+        *addr = this->_merge_addr;
+        return Status::OK();
+    }
+    return Status::InternalError("not found merge addr");
 }
 
 Status RuntimeFilterMergeControllerEntity::_init_with_desc(
@@ -120,17 +125,16 @@ Status RuntimeFilterMergeControllerEntity::_init_with_desc(
     std::shared_ptr<RuntimeFilterCntlVal> cntVal = std::make_shared<RuntimeFilterCntlVal>();
     // runtime_filter_desc and target will be released,
     // so we need to copy to cntVal
+    // TODO: tracker should add a name
     cntVal->runtime_filter_desc = *runtime_filter_desc;
     cntVal->target_info = *target_info;
     cntVal->pool.reset(new ObjectPool());
     cntVal->tracker = MemTracker::CreateTracker();
-    if (runtime_filter_desc->is_broadcast_join) {
-    }
     cntVal->filter = cntVal->pool->add(
             new ShuffleRuntimeFilter(nullptr, cntVal->tracker.get(), cntVal->pool.get()));
 
     std::string filter_id = std::to_string(runtime_filter_desc->filter_id);
-    LOG(INFO) << "entity filter id:" << filter_id;
+    // LOG(INFO) << "entity filter id:" << filter_id;
     cntVal->filter->init_with_desc(&cntVal->runtime_filter_desc);
     _filter_map.emplace(filter_id, cntVal);
     return Status::OK();
@@ -146,7 +150,6 @@ Status RuntimeFilterMergeControllerEntity::init(UniqueId query_id,
             return Status::InternalError("runtime filter params meet error");
         }
         _init_with_desc(&filterid_to_desc.second, &target_iter->second);
-        // target_iter->second
     }
     return Status::OK();
 }

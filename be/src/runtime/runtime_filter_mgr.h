@@ -96,7 +96,9 @@ private:
     MemTracker* _tracker;
     ObjectPool _pool;
 
-    TNetworkAddress merge_addr;
+    TNetworkAddress _merge_addr;
+
+    bool _has_merge_addr;
 };
 
 // controller -> <query-id, entity>

@@ -35,6 +35,7 @@
 #include "runtime/runtime_filter_mgr.h"
 #include "runtime/runtime_state.h"
 #include "runtime/type_limit.h"
+#include "util/defer_op.h"
 #include "util/string_parser.hpp"
 
 namespace doris {
@@ -773,6 +774,8 @@ Status IRuntimeFilter::get_prepared_context(std::vector<ExprContext*>* push_expr
 
 bool IRuntimeFilter::await() {
     DCHECK(is_consumer());
+    int64_t begin_wait_time = UnixMillis();
+    DeferOp defer([=] { this->_await_time_cost = UnixMillis() - begin_wait_time; });
     int64_t wait_times_ms = config::runtime_filter_shuffle_wait_time_ms;
     if (!_is_ready) {
         std::unique_lock<std::mutex> lock(_inner_mutex);
@@ -786,6 +789,7 @@ void IRuntimeFilter::signal() {
     DCHECK(is_consumer());
     _is_ready = true;
     _inner_cv.notify_all();
+    this->_effect_time = UnixMillis();
 }
 
 Status IRuntimeFilter::init_with_desc(const TRuntimeFilterDesc* desc, int node_id) {
@@ -807,6 +811,7 @@ Status IRuntimeFilter::init_with_desc(const TRuntimeFilterDesc* desc, int node_i
     _has_remote_target = desc->has_remote_targets;
     _expr_order = desc->expr_order;
     _filter_id = desc->filter_id;
+    _regist_time = UnixMillis();
 
     ExprContext* build_ctx = nullptr;
     RETURN_IF_ERROR(Expr::create_expr_tree(_pool, desc->src_expr, &build_ctx));
@@ -1031,12 +1036,13 @@ Status RuntimeFilterSlots::init(RuntimeState* state, ObjectPool* pool, MemTracke
     for (auto& filter_desc : _runtime_filter_descs) {
         IRuntimeFilter* runtime_filter = nullptr;
         RETURN_IF_ERROR(state->runtime_filter_mgr()->get_producer_filter(filter_desc.filter_id,
-                                                                        &runtime_filter));
+                                                                         &runtime_filter));
         DCHECK(runtime_filter != nullptr);
         DCHECK(runtime_filter->expr_order() >= 0);
         DCHECK(runtime_filter->expr_order() < _probe_expr_context.size());
         _runtime_filters[runtime_filter->expr_order()].push_back(runtime_filter);
-        LOG(WARNING) << "regist filter size:" << runtime_filter->expr_order() << "," << _runtime_filters[runtime_filter->expr_order()].size();
+        LOG(WARNING) << "regist filter size:" << runtime_filter->expr_order() << ","
+                     << _runtime_filters[runtime_filter->expr_order()].size();
     }
     return Status::OK();
 }
