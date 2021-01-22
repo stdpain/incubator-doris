@@ -47,7 +47,7 @@ Status RuntimeFilterMgr::get_filter_by_role(const int filter_id, const int role,
 
     auto iter = filter_map->find(key);
     if (iter == filter_map->end()) {
-        LOG(WARNING) << "unknown filter...:" << key;
+        LOG(WARNING) << "unknown filter...:" << key << ",role:" << role;
         return Status::InvalidArgument("unknown filter");
     }
     *target = iter->second.filter;
@@ -65,7 +65,7 @@ Status RuntimeFilterMgr::get_producer_filter(const int filter_id,
 
 Status RuntimeFilterMgr::regist_filter(const int role, const TRuntimeFilterDesc& desc,
                                        int node_id) {
-    DCHECK((role == ROLE_CONSUMER && node_id >= 0));
+    DCHECK((role == ROLE_CONSUMER && node_id >= 0) || role != ROLE_CONSUMER);
     std::string key = std::to_string(desc.filter_id);
 
     std::map<std::string, RuntimeFilterMgrVal>* filter_map = nullptr;
@@ -74,6 +74,7 @@ Status RuntimeFilterMgr::regist_filter(const int role, const TRuntimeFilterDesc&
     } else {
         filter_map = &_producer_map;
     }
+    LOG(WARNING) << "regist filter...:" << key << ",role:" << role;
 
     auto iter = filter_map->find(key);
     if (iter != filter_map->end()) {
@@ -84,11 +85,9 @@ Status RuntimeFilterMgr::regist_filter(const int role, const TRuntimeFilterDesc&
     filter_mgr_val.role = role;
     filter_mgr_val.runtime_filter_desc = &desc; // dangerous
 
-    RETURN_IF_ERROR(IRuntimeFilter::create(_state, _tracker, &_pool, &desc, role, -1,
+    RETURN_IF_ERROR(IRuntimeFilter::create(_state, _tracker, &_pool, &desc, role, node_id,
                                            &filter_mgr_val.filter));
 
-    filter_mgr_val.filter->set_role(role);
-    filter_mgr_val.filter->init_with_desc(&desc);
     filter_map->emplace(key, filter_mgr_val);
 
     return Status::OK();

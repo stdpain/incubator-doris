@@ -268,20 +268,42 @@ Status HashJoinNode::open(RuntimeState* state) {
         _is_push_down = false;
     }
 
-    // Open the probe-side child so that it may perform any initialisation in parallel.
-    // Don't exit even if we see an error, we still need to wait for the build thread
-    // to finish.
-    Status open_status = child(0)->open(state);
+    if (_runtime_filter_descs.size() > 0) {
+        RuntimeFilterSlots runtime_filter_slots(_probe_expr_ctxs, _build_expr_ctxs,
+                                                _runtime_filter_descs);
+        RETURN_IF_ERROR(runtime_filter_slots.init(state, _pool, expr_mem_tracker().get()));
 
-    // Blocks until ConstructHashTable has returned, after which
-    // the hash table is fully constructed and we can start the probe
-    // phase.
-    RETURN_IF_ERROR(thread_status.get_future().get());
+        RETURN_IF_ERROR(thread_status.get_future().get());
+        {
+            SCOPED_TIMER(_push_compute_timer);
+            HashTable::Iterator iter = _hash_tbl->begin();
 
-    // ISSUE-1247, check open_status after buildThread execute.
-    // If this return first, build thread will use 'thread_status'
-    // which is already destructor and then coredump.
-    RETURN_IF_ERROR(open_status);
+            while (iter.has_next()) {
+                TupleRow* row = iter.get_row();
+                runtime_filter_slots.insert(row);
+                iter.next<false>();
+            }
+        }
+        COUNTER_UPDATE(_build_timer, _push_compute_timer->value());
+        SCOPED_TIMER(_push_down_timer);
+        runtime_filter_slots.publish(this);
+
+    } else {
+        // Open the probe-side child so that it may perform any initialisation in parallel.
+        // Don't exit even if we see an error, we still need to wait for the build thread
+        // to finish.
+        Status open_status = child(0)->open(state);
+
+        // Blocks until ConstructHashTable has returned, after which
+        // the hash table is fully constructed and we can start the probe
+        // phase.
+        RETURN_IF_ERROR(thread_status.get_future().get());
+
+        // ISSUE-1247, check open_status after buildThread execute.
+        // If this return first, build thread will use 'thread_status'
+        // which is already destructor and then coredump.
+        RETURN_IF_ERROR(open_status);
+    }
 
     // seed probe batch and _current_probe_row, etc.
     while (true) {

@@ -28,18 +28,18 @@
 
 namespace doris {
 
-struct ShuffleRuntimeFilter::rpc_context {
+struct IRuntimeFilter::rpc_context {
     PMergeFilterRequest request;
     PMergeFilterResponse response;
     brpc::Controller cntl;
     brpc::CallId cid;
 };
 
-Status ShuffleRuntimeFilter::push_to_remote(RuntimeState* state, const TNetworkAddress* addr) {
+Status IRuntimeFilter::push_to_remote(RuntimeState* state, const TNetworkAddress* addr) {
     DCHECK(is_producer());
     DCHECK(_rpc_context == nullptr);
     PBackendService_Stub* stub = state->exec_env()->brpc_stub_cache()->get_stub(*addr);
-    _rpc_context = std::make_shared<ShuffleRuntimeFilter::rpc_context>();
+    _rpc_context = std::make_shared<IRuntimeFilter::rpc_context>();
     void* data = nullptr;
     int len = 0;
 
@@ -66,12 +66,12 @@ Status ShuffleRuntimeFilter::push_to_remote(RuntimeState* state, const TNetworkA
     return Status::OK();
 }
 
-Status ShuffleRuntimeFilter::join_rpc() {
+Status IRuntimeFilter::join_rpc() {
     DCHECK(is_producer());
     if (_rpc_context != nullptr) {
         brpc::Join(_rpc_context->cid);
         if (_rpc_context->cntl.Failed()) {
-            LOG(WARNING) << "shuffle runtimefilter rpc err:" << _rpc_context->cntl.ErrorText();
+            LOG(WARNING) << "runtimefilter rpc err:" << _rpc_context->cntl.ErrorText();
         }
     }
     return Status::OK();

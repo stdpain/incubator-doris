@@ -52,7 +52,6 @@ class PMergeFilterRequest;
 
 #define ROLE_PRODUCER 0
 #define ROLE_CONSUMER 1
-#define ROLE_MERGER 2
 
 // owned by RuntimeState
 class RuntimeFilterMgr {

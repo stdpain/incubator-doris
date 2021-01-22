@@ -198,18 +198,16 @@ Status OlapScanNode::open(RuntimeState* state) {
         if (runtime_filter == nullptr) {
             continue;
         }
-        if (state->enable_runtime_filter_mode()) {
-            bool ready = runtime_filter->is_ready();
-            if (!ready) {
-                int64_t start_time = UnixMillis();
-                ready = runtime_filter->await();
-                int64_t end_time = UnixMillis();
-                LOG(INFO) << "runtime filter wait time:" << end_time - start_time << "ms";
-            }
-            if (ready) {
-                RETURN_IF_ERROR(runtime_filter->get_push_expr_ctxs(&expr_context));
-                _runtime_filter_pushed_marks[i] = true;
-            }
+        bool ready = runtime_filter->is_ready();
+        if (!ready) {
+            int64_t start_time = UnixMillis();
+            ready = runtime_filter->await();
+            int64_t end_time = UnixMillis();
+            LOG(INFO) << "runtime filter wait time:" << end_time - start_time << "ms";
+        }
+        if (ready) {
+            RETURN_IF_ERROR(runtime_filter->get_push_expr_ctxs(&expr_context));
+            _runtime_filter_pushed_marks[i] = true;
         }
     }
     push_down_predicate(state, &expr_context);

@@ -21,6 +21,7 @@
 
 #include "common/object_pool.h"
 #include "common/status.h"
+#include "exec/hash_join_node.h"
 #include "exprs/binary_predicate.h"
 #include "exprs/bloomfilter_predicate.h"
 #include "exprs/expr.h"
@@ -710,9 +711,40 @@ void IRuntimeFilter::insert(void* data) {
     _wrapper->insert(data);
 }
 
+Status IRuntimeFilter::publish(HashJoinNode* hash_join_node, ExprContext* probe_ctx) {
+    DCHECK(is_producer());
+    if (_has_local_target) {
+        /// TODO:
+        std::list<ExprContext*> push_down_ctxs;
+        get_push_expr_ctxs(&push_down_ctxs, probe_ctx);
+        IRuntimeFilter* consumer_filter = nullptr;
+        // TODO: log if err
+        Status status =
+                _state->runtime_filter_mgr()->get_consume_filter(_filter_id, &consumer_filter);
+        DCHECK(status.ok());
+        // push down
+        hash_join_node->push_down_predicate(_state, &push_down_ctxs);
+        consumer_filter->set_pushdown_status();
+        consumer_filter->signal();
+        return Status::OK();
+    } else {
+        TNetworkAddress addr;
+        RETURN_IF_ERROR(_state->runtime_filter_mgr()->get_merge_addr(&addr));
+        return push_to_remote(_state, &addr);
+    }
+}
+
+void IRuntimeFilter::publish_finally() {
+    DCHECK(is_producer());
+    join_rpc();
+}
+
 Status IRuntimeFilter::get_push_expr_ctxs(std::list<ExprContext*>* push_expr_ctxs) {
     DCHECK(is_consumer());
-    return _wrapper->get_push_context(push_expr_ctxs, _state, _probe_ctx);
+    if (!_pushdown_status) {
+        return _wrapper->get_push_context(push_expr_ctxs, _state, _probe_ctx);
+    }
+    return Status::OK();
 }
 
 Status IRuntimeFilter::get_push_expr_ctxs(std::list<ExprContext*>* push_expr_ctxs,
@@ -758,7 +790,7 @@ void IRuntimeFilter::signal() {
 
 Status IRuntimeFilter::init_with_desc(const TRuntimeFilterDesc* desc, int node_id) {
     // if node_id == -1 , it shouldn't be a consumer
-    DCHECK(node_id > 0 || (node_id == -1 && !is_consumer()));
+    DCHECK(node_id >= 0 || (node_id == -1 && !is_consumer()));
 
     if (desc->type == TRuntimeFilterType::BLOOM) {
         _runtime_filter_type = RuntimeFilterType::BLOOM_FILTER;
@@ -774,6 +806,7 @@ Status IRuntimeFilter::init_with_desc(const TRuntimeFilterDesc* desc, int node_i
     _has_local_target = desc->has_local_targets;
     _has_remote_target = desc->has_remote_targets;
     _expr_order = desc->expr_order;
+    _filter_id = desc->filter_id;
 
     ExprContext* build_ctx = nullptr;
     RETURN_IF_ERROR(Expr::create_expr_tree(_pool, desc->src_expr, &build_ctx));
@@ -950,6 +983,23 @@ void IRuntimeFilter::to_protobuf(PMinMaxFilter* filter) {
     }
 }
 
+Status IRuntimeFilter::update_filter(const UpdateRuntimeFilterParams* param) {
+    std::shared_ptr<MemTracker> tracker = MemTracker::CreateTracker();
+    ObjectPool pool;
+    // TODO:
+    RuntimePredicateWrapper* wrapper = nullptr;
+    RETURN_IF_ERROR(IRuntimeFilter::create_wrapper(param, tracker.get(), &pool, &wrapper));
+    RETURN_IF_ERROR(_wrapper->merge(wrapper));
+    this->signal();
+    return Status::OK();
+}
+
+Status IRuntimeFilter::consumer_close() {
+    DCHECK(is_consumer());
+    Expr::close(_push_down_ctxs, _state);
+    return Status::OK();
+}
+
 BoardCastRuntimeFilter::BoardCastRuntimeFilter(RuntimeState* state, MemTracker* mem_tracker,
                                                ObjectPool* pool)
         : IRuntimeFilter(state, mem_tracker, pool) {}
@@ -961,28 +1011,9 @@ Status BoardCastRuntimeFilter::init_with_desc(const TRuntimeFilterDesc* desc, in
     return Status::OK();
 }
 
-Status BoardCastRuntimeFilter::update_filter(const UpdateRuntimeFilterParams* param) {
-    return Status::InvalidArgument("Unsupport update filter");
-}
-
-Status BoardCastRuntimeFilter::consumer_close() {
-    return Status::OK();
-}
-
 ShuffleRuntimeFilter::ShuffleRuntimeFilter(RuntimeState* state, MemTracker* tracker,
                                            ObjectPool* pool)
-        : IRuntimeFilter(state, tracker, pool), _query_id(-1, -1) {}
-
-Status ShuffleRuntimeFilter::update_filter(const UpdateRuntimeFilterParams* param) {
-    std::shared_ptr<MemTracker> tracker = MemTracker::CreateTracker();
-    ObjectPool pool;
-    // TODO:
-    RuntimePredicateWrapper* wrapper = nullptr;
-    RETURN_IF_ERROR(IRuntimeFilter::create_wrapper(param, tracker.get(), &pool, &wrapper));
-    RETURN_IF_ERROR(_wrapper->merge(wrapper));
-    this->signal();
-    return Status::OK();
-}
+        : IRuntimeFilter(state, tracker, pool) {}
 
 Status ShuffleRuntimeFilter::init_with_desc(const TRuntimeFilterDesc* desc, int node_id) {
     RETURN_IF_ERROR(IRuntimeFilter::init_with_desc(desc, node_id));
@@ -994,31 +1025,34 @@ Status ShuffleRuntimeFilter::init_with_desc(const TRuntimeFilterDesc* desc, int 
 
 ShuffleRuntimeFilter::~ShuffleRuntimeFilter() {}
 
-Status ShuffleRuntimeFilter::consumer_close() {
-    DCHECK(is_consumer());
-    Expr::close(_push_down_ctxs, _state);
-    return Status::OK();
-}
-
 Status RuntimeFilterSlots::init(RuntimeState* state, ObjectPool* pool, MemTracker* tracker) {
     DCHECK(_probe_expr_context.size() == _build_expr_context.size());
 
     for (auto& filter_desc : _runtime_filter_descs) {
         IRuntimeFilter* runtime_filter = nullptr;
-        RETURN_IF_ERROR(state->runtime_filter_mgr()->get_consume_filter(filter_desc.filter_id,
+        RETURN_IF_ERROR(state->runtime_filter_mgr()->get_producer_filter(filter_desc.filter_id,
                                                                         &runtime_filter));
         DCHECK(runtime_filter != nullptr);
         DCHECK(runtime_filter->expr_order() >= 0);
         DCHECK(runtime_filter->expr_order() < _probe_expr_context.size());
         _runtime_filters[runtime_filter->expr_order()].push_back(runtime_filter);
+        LOG(WARNING) << "regist filter size:" << runtime_filter->expr_order() << "," << _runtime_filters[runtime_filter->expr_order()].size();
     }
     return Status::OK();
 }
 
 void RuntimeFilterSlots::publish(HashJoinNode* hash_join_node) {
+    for (int i = 0; i < _probe_expr_context.size(); ++i) {
+        auto iter = _runtime_filters.find(i);
+        if (iter != _runtime_filters.end()) {
+            for (auto filter : iter->second) {
+                filter->publish(hash_join_node, _probe_expr_context[i]);
+            }
+        }
+    }
     for (auto& pair : _runtime_filters) {
         for (auto filter : pair.second) {
-            filter->publish();
+            filter->publish_finally();
         }
     }
 }

@@ -93,7 +93,8 @@ public:
               _role(true),
               _expr_order(-1),
               _always_true(false),
-              _probe_ctx(nullptr) {}
+              _probe_ctx(nullptr),
+              _pushdown_status(false) {}
 
     virtual ~IRuntimeFilter() = default;
 
@@ -107,7 +108,9 @@ public:
 
     // publish filter
     // push filter to remote node or push down it to scan_node
-    virtual void publish() {};
+    Status publish(HashJoinNode* hash_join_node, ExprContext* probe_ctx);
+
+    void publish_finally();
 
     RuntimeFilterType type() const { return _runtime_filter_type; }
 
@@ -158,10 +161,16 @@ public:
     static Status create_wrapper(const UpdateRuntimeFilterParams* param, MemTracker* tracker,
                                  ObjectPool* pool, RuntimePredicateWrapper** wrapper);
 
-    virtual Status update_filter(const UpdateRuntimeFilterParams* param) = 0;
+    Status update_filter(const UpdateRuntimeFilterParams* param);
+
+    void set_pushdown_status() { _pushdown_status = true; };
 
     // consumer should call before released
-    virtual Status consumer_close() = 0;
+    virtual Status consumer_close();
+
+    // async push runtimefilter to remote node
+    virtual Status push_to_remote(RuntimeState* state, const TNetworkAddress* addr);
+    virtual Status join_rpc();
 
 protected:
     // serialize _wrapper to protobuf
@@ -212,11 +221,17 @@ protected:
     // we don't have to prepare it or close it
     ExprContext* _probe_ctx;
 
+    // Indicate whether runtime filter expr has been push down
+    bool _pushdown_status;
+
     // some runtime filter will generate
     // multiple contexts such as minmax filter
     // these context is called prepared by this,
     // consumer_close should be called before release
     std::vector<ExprContext*> _push_down_ctxs;
+
+    struct rpc_context;
+    std::shared_ptr<rpc_context> _rpc_context;
 };
 
 /// LocalRuntimeFilter is only used in boardcast join
@@ -230,10 +245,6 @@ public:
     // Status create_runtime_predicate(const RuntimeFilterParams* params);
 
     virtual Status init_with_desc(const TRuntimeFilterDesc* desc, int node_id);
-
-    virtual Status update_filter(const UpdateRuntimeFilterParams* param);
-
-    virtual Status consumer_close();
 };
 
 /// The shuffle runtime filter is built from the join node.
@@ -243,24 +254,8 @@ public:
     ~ShuffleRuntimeFilter();
     bool is_ready() const { return _is_ready; }
 
-    // update a filter from params and `signal` will be called
-    Status update_filter(const UpdateRuntimeFilterParams* param) override;
-
     // One of the next three functions must be called
     Status init_with_desc(const TRuntimeFilterDesc* desc, int node_id) override;
-
-    // consumer should call
-    Status consumer_close() override;
-
-    // async push runtimefilter to remote node
-    Status push_to_remote(RuntimeState* state, const TNetworkAddress* addr);
-    Status join_rpc();
-
-private:
-    UniqueId _query_id;
-
-    struct rpc_context;
-    std::shared_ptr<rpc_context> _rpc_context;
 };
 
 /// this class used in a hash join node

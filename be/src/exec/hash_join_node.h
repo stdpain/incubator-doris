@@ -62,6 +62,8 @@ protected:
     void debug_string(int indentation_level, std::stringstream* out) const;
 
 private:
+    friend class IRuntimeFilter;
+
     boost::scoped_ptr<HashTable> _hash_tbl;
     HashTable::Iterator _hash_tbl_iterator;
     bool _is_push_down;
