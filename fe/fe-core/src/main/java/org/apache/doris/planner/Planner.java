@@ -35,6 +35,7 @@ import org.apache.doris.thrift.TQueryOptions;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.Lists;
 
+import org.apache.doris.thrift.TRuntimeFilterMode;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
@@ -184,6 +185,11 @@ public class Planner {
         PlanFragment rootFragment = fragments.get(fragments.size() - 1);
         QueryStatisticsTransferOptimizer queryStatisticTransferOptimizer = new QueryStatisticsTransferOptimizer(rootFragment);
         queryStatisticTransferOptimizer.optimizeQueryStatisticsTransfer();
+
+        // Create runtime filters.
+        if (!plannerContext.getQueryOptions().getRuntimeFilterMode().equals(TRuntimeFilterMode.OFF.name())) {
+            RuntimeFilterGenerator.generateRuntimeFilters(plannerContext, rootFragment.getPlanRoot());
+        }
 
         if (statement instanceof InsertStmt) {
             InsertStmt insertStmt = (InsertStmt) statement;

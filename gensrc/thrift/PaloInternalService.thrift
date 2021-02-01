@@ -138,8 +138,25 @@ struct TQueryOptions {
   30: optional i32 max_pushdown_conditions_per_column
   // whether enable spilling to disk
   31: optional bool enable_spilling = false;
-  // whether enable runtime filter
+
+  // runtime filter run mode
   32: optional string runtime_filter_mode = "GLOBAL";
+
+  // Size in bytes of Bloom Filters used for runtime filters. Actual size of filter will
+  // be rounded up to the nearest power of two.
+  33: optional i32 runtime_bloom_filter_size = 1048576
+
+  // Minimum runtime bloom filter size, in bytes
+  34: optional i32 runtime_bloom_filter_min_size = 1048576
+
+  // Maximum runtime bloom filter size, in bytes
+  35: optional i32 runtime_bloom_filter_max_size = 16777216
+
+  // Time in ms to wait until runtime filters are delivered.
+  36: optional i32 runtime_filter_wait_time_ms = 1000
+
+  // Maximum number of bloom runtime filters allowed per query
+  37: optional i32 max_num_runtime_filters = 10
 }
     
 
@@ -160,24 +177,25 @@ struct TPlanFragmentDestination {
 }
 
 struct TRuntimeFilterTargetParams {
-  1: required Types.TUniqueId target_fragment_instance_id
-  // The address of the instance where the fragment is expected to run
-  2: required Types.TNetworkAddress target_fragment_instance_addr
+    1: required Types.TUniqueId target_fragment_instance_id
+
+    // The address of the instance where the fragment is expected to run
+    2: required Types.TNetworkAddress target_fragment_instance_addr
 }
 
 struct TRuntimeFilterParams {
-  // Runtime filter merge instance address
-  1: optional Types.TNetworkAddress runtime_filter_merge_addr
+    // Runtime filter merge instance address
+    1: optional Types.TNetworkAddress runtime_filter_merge_addr
 
-  // Runtime filter ID to the instance address of the fragment,
-  // that is expected to use this runtime filter
-  2: optional map<i32, list<TRuntimeFilterTargetParams>> rid_to_target_param
+    // Runtime filter ID to the instance address of the fragment,
+    // that is expected to use this runtime filter
+    2: optional map<i32, list<TRuntimeFilterTargetParams>> rid_to_target_param
 
-  // Runtime filter ID to the runtime filter desc
-  3: optional map<i32, PlanNodes.TRuntimeFilterDesc> rid_to_runtime_filter
+    // Runtime filter ID to the runtime filter desc
+    3: optional map<i32, PlanNodes.TRuntimeFilterDesc> rid_to_runtime_filter
 
-  // Number of Runtime filter producers
-  4: optional map<i32, i32> runtime_filter_builder_num
+    // Number of Runtime filter producers
+    4: optional map<i32, i32> runtime_filter_builder_num
 }
 
 // Parameters for a single execution instance of a particular TPlanFragment
@@ -212,6 +230,7 @@ struct TPlanFragmentExecParams {
   9: optional i32 sender_id
   10: optional i32 num_senders
   11: optional bool send_query_statistics_with_every_batch
+
   // Used to merge and send runtime filter
   12: optional TRuntimeFilterParams runtime_filter_params
 }

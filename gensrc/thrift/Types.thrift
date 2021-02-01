@@ -187,12 +187,18 @@ enum TExplainLevel {
 }
 
 enum TRuntimeFilterMode {
+  // No filters are computed in the FE or the BE.
+  OFF = 0
+
   // Only broadcast filters are computed in the BE, and are only published to the local
   // fragment.
   LOCAL = 1
 
+  // Only shuffle filters are computed in the BE, and are only published globally.
+  REMOTE = 2
+
   // All fiters are computed in the BE, and are published globally.
-  GLOBAL = 2
+  GLOBAL = 3
 }
 
 struct TColumnType {

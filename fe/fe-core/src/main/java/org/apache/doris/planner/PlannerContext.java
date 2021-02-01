@@ -22,10 +22,14 @@ import org.apache.doris.analysis.InsertStmt;
 import org.apache.doris.analysis.QueryStmt;
 import org.apache.doris.analysis.StatementBase;
 import org.apache.doris.common.IdGenerator;
+import org.apache.doris.planner.RuntimeFilterGenerator.RuntimeFilter;
 import org.apache.doris.thrift.TQueryOptions;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * Contains the analysis result of a query as well as planning-specific
@@ -49,6 +53,9 @@ public class PlannerContext {
     private final QueryStmt queryStmt_;
     private final StatementBase statement_;
 
+    // Runtime filter ID to the runtime filter desc
+    private List<RuntimeFilter> ridToRuntimeFilter = new ArrayList<>();
+
     public PlannerContext(Analyzer analyzer, QueryStmt queryStmt, TQueryOptions queryOptions, StatementBase statement) {
         this.analyzer_ = analyzer;
         this.queryStmt_ = queryStmt;
@@ -62,6 +69,8 @@ public class PlannerContext {
     public boolean isSingleNodeExec() { return getQueryOptions().num_nodes == 1; }
     public PlanNodeId getNextNodeId() { return nodeIdGenerator_.getNextId(); }
     public PlanFragmentId getNextFragmentId() { return fragmentIdGenerator_.getNextId(); }
+    public void putRidToRuntimeFilter(RuntimeFilter rf) { ridToRuntimeFilter.add(rf); }
+    public List<RuntimeFilter> getRidToRuntimeFilter() { return ridToRuntimeFilter; }
 
     public boolean isInsert() { return statement_ instanceof InsertStmt; }
 }

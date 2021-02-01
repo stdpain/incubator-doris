@@ -18,6 +18,7 @@
 package org.apache.doris.planner;
 
 import com.google.common.base.Predicates;
+import com.google.common.base.Joiner;
 import org.apache.doris.analysis.Analyzer;
 import org.apache.doris.analysis.Expr;
 import org.apache.doris.analysis.ExprSubstitutionMap;
@@ -27,6 +28,7 @@ import org.apache.doris.analysis.TupleId;
 import org.apache.doris.common.AnalysisException;
 import org.apache.doris.common.TreeNode;
 import org.apache.doris.common.UserException;
+import org.apache.doris.planner.RuntimeFilterGenerator.RuntimeFilter;
 import org.apache.doris.thrift.TExplainLevel;
 import org.apache.doris.thrift.TPlan;
 import org.apache.doris.thrift.TPlanNode;
@@ -40,6 +42,7 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 import java.util.Set;
 
@@ -100,6 +103,11 @@ abstract public class PlanNode extends TreeNode<PlanNode> {
     //  Node should compact data.
     protected boolean compactData;
     protected int numInstances;
+
+    private boolean cardinalityIsDone = false;
+
+    // Runtime filters assigned to this node.
+    protected List<RuntimeFilter> runtimeFilters = new ArrayList<>();
 
     protected PlanNode(PlanNodeId id, ArrayList<TupleId> tupleIds, String planNodeName) {
         this.id = id;
@@ -388,6 +396,10 @@ abstract public class PlanNode extends TreeNode<PlanNode> {
         for (Expr e : conjuncts) {
             msg.addToConjuncts(e.treeToThrift());
         }
+        // Serialize any runtime filters
+        for (RuntimeFilter filter : runtimeFilters) {
+            msg.addToRuntimeFilters(filter.toThrift());
+        }
         msg.compact_data = compactData;
         toThrift(msg);
         container.addToNodes(msg);
@@ -612,5 +624,33 @@ abstract public class PlanNode extends TreeNode<PlanNode> {
             }
             sb.append(")");
         }
+    }
+
+    protected void addRuntimeFilter(RuntimeFilter filter) { runtimeFilters.add(filter); }
+
+    protected Collection<RuntimeFilter> getRuntimeFilters() { return runtimeFilters; }
+
+    protected String getRuntimeFilterExplainString(
+            boolean isBuildNode, TExplainLevel detailLevel) {
+        if (runtimeFilters.isEmpty()) return "";
+        List<String> filtersStr = new ArrayList<>();
+        for (RuntimeFilter filter: runtimeFilters) {
+            StringBuilder filterStr = new StringBuilder();
+            filterStr.append(filter.getFilterId());
+            if (detailLevel.ordinal() >= TExplainLevel.VERBOSE.ordinal()) {
+                filterStr.append("[");
+                filterStr.append(filter.getType().toString().toLowerCase());
+                filterStr.append("]");
+            }
+            if (isBuildNode) {
+                filterStr.append(" <- ");
+                filterStr.append(filter.getSrcExpr().toSql());
+            } else {
+                filterStr.append(" -> ");
+                filterStr.append(filter.getTargetExpr(getId()).toSql());
+            }
+            filtersStr.add(filterStr.toString());
+        }
+        return Joiner.on(", ").join(filtersStr) + "\n";
     }
 }

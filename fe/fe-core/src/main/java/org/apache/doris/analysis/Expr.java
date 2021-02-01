@@ -519,6 +519,12 @@ abstract public class Expr extends TreeNode<Expr> implements ParseNode, Cloneabl
         return countMap;
     }
 
+    /**
+     * Helper function to analyze this expr and assert that the analysis was successful.
+     * TODO: This function could be used in many more places to clean up. Consider
+     * adding an IAnalyzable interface or similar to and move this helper into Analyzer
+     * such that non-Expr things can use the helper also.
+     */
     public void analyzeNoThrow(Analyzer analyzer) {
         try {
             analyze(analyzer);
@@ -1653,5 +1659,12 @@ abstract public class Expr extends TreeNode<Expr> implements ParseNode, Cloneabl
         recursiveResetChildrenResult();
         final Expr newExpr = ExpressionFunctions.INSTANCE.evalExpr(this);
         return newExpr != null ? newExpr : this;
+    }
+
+    public static Expr getFirstBoundChild(Expr expr, List<TupleId> tids) {
+        for (Expr child: expr.getChildren()) {
+            if (child.isBoundByTupleIds(tids)) return child;
+        }
+        return null;
     }
 }

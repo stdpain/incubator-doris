@@ -58,7 +58,11 @@ public class BinaryPredicate extends Predicate implements Writable {
         GE(">=", "ge", TExprOpcode.GE),
         LT("<", "lt", TExprOpcode.LT),
         GT(">", "gt", TExprOpcode.GT),
-        EQ_FOR_NULL("<=>", "eq_for_null", TExprOpcode.EQ_FOR_NULL);
+        EQ_FOR_NULL("<=>", "eq_for_null", TExprOpcode.EQ_FOR_NULL),
+        // Same as EQ, except it returns True if the rhs is NULL. There is no backend
+        // function for this. The functionality is embedded in the hash-join
+        // implementation.
+        NULL_MATCHING_EQ("=", "null_matching_eq", TExprOpcode.EQ);
 
         private final String description;
         private final String name;
@@ -131,6 +135,8 @@ public class BinaryPredicate extends Predicate implements Writable {
         }
 
         public boolean isEquivalence() { return this == EQ || this == EQ_FOR_NULL; };
+
+        public boolean isNullSafeEquivalence() { return this == EQ_FOR_NULL; };
 
         public boolean isUnequivalence() { return this == NE; }
     }

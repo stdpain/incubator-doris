@@ -112,7 +112,13 @@ public class SessionVariable implements Serializable, Writable {
     // when true, the partition column must be set to NOT NULL.
     public static final String ALLOW_PARTITION_COLUMN_NULLABLE = "allow_partition_column_nullable";
 
-    public static final String ENABLE_RUNTIME_FILTER_MODE = "enable_runtime_filter_mode";
+    // runtime filter
+    public static final String RUNTIME_FILTER_MODE = "runtime_filter_mode";
+    public static final String RUNTIME_BLOOM_FILTER_SIZE = "runtime_bloom_filter_size";
+    public static final String RUNTIME_BLOOM_FILTER_MIN_SIZE = "runtime_bloom_filter_min_size";
+    public static final String RUNTIME_BLOOM_FILTER_MAX_SIZE = "runtime_bloom_filter_max_size";
+    public static final String RUNTIME_FILTER_WAIT_TIME_MS = "runtime_filter_wait_time_ms";
+    public static final String MAX_NUM_RUNTIME_FILTERS = "max_num_runtime_filters";
 
     // max memory used on every backend.
     @VariableMgr.VarAttr(name = EXEC_MEM_LIMIT)
@@ -282,8 +288,18 @@ public class SessionVariable implements Serializable, Writable {
     @VariableMgr.VarAttr(name = ALLOW_PARTITION_COLUMN_NULLABLE)
     private boolean allowPartitionColumnNullable = true;
 
-    @VariableMgr.VarAttr(name = ENABLE_RUNTIME_FILTER_MODE)
-    private boolean enableRuntimeFilterMode = true;
+    @VariableMgr.VarAttr(name = RUNTIME_FILTER_MODE)
+    private String runtimeFilterMode = "GLOBAL";
+    @VariableMgr.VarAttr(name = RUNTIME_BLOOM_FILTER_SIZE)
+    private int runtimeBloomFilterSize = 1048576;
+    @VariableMgr.VarAttr(name = RUNTIME_BLOOM_FILTER_MIN_SIZE)
+    private int runtimeBloomFilterMinSize = 1048576;
+    @VariableMgr.VarAttr(name = RUNTIME_BLOOM_FILTER_MAX_SIZE)
+    private int runtimeBloomFilterMaxSize = 16777216;
+    @VariableMgr.VarAttr(name = RUNTIME_FILTER_WAIT_TIME_MS)
+    private int runtimeFilterWaitTimeMs = 1000;
+    @VariableMgr.VarAttr(name = MAX_NUM_RUNTIME_FILTERS)
+    private int maxNumRuntimeFilters = 10;
 
     public long getMaxExecMemByte() {
         return maxExecMemByte;
@@ -549,12 +565,52 @@ public class SessionVariable implements Serializable, Writable {
 
     public boolean isAllowPartitionColumnNullable() { return allowPartitionColumnNullable; }
 
-    public boolean enableRuntimeFilterMode() {
-        return enableRuntimeFilterMode;
+    public String runtimeFilterMode() {
+        return runtimeFilterMode;
     }
 
-    public void setEnableRuntimeFilterMode(boolean enableRuntimeFilterMode) {
-        this.enableRuntimeFilterMode = enableRuntimeFilterMode;
+    public void setRuntimeFilterMode(String runtimeFilterMode) {
+        this.runtimeFilterMode = runtimeFilterMode;
+    }
+
+    public int runtimeBloomFilterSize() {
+        return runtimeBloomFilterSize;
+    }
+
+    public void setRuntimeBloomFilterSize(int runtimeBloomFilterSize) {
+        this.runtimeBloomFilterSize = runtimeBloomFilterSize;
+    }
+
+    public int runtimeBloomFilterMinSize() {
+        return runtimeBloomFilterMinSize;
+    }
+
+    public void setRuntimeBloomFilterMinSize(int runtimeBloomFilterMinSize) {
+        this.runtimeBloomFilterMinSize = runtimeBloomFilterMinSize;
+    }
+
+    public int runtimeBloomFilterMaxSize() {
+        return runtimeBloomFilterMaxSize;
+    }
+
+    public void setRuntimeBloomFilterMaxSize(int runtimeBloomFilterMaxSize) {
+        this.runtimeBloomFilterMaxSize = runtimeBloomFilterMaxSize;
+    }
+
+    public int runtimeFilterWaitTimeMs() {
+        return runtimeFilterWaitTimeMs;
+    }
+
+    public void setRuntimeFilterWaitTimeMs(int runtimeFilterWaitTimeMs) {
+        this.runtimeFilterWaitTimeMs = runtimeFilterWaitTimeMs;
+    }
+
+    public int maxNumRuntimeFilters() {
+        return maxNumRuntimeFilters;
+    }
+
+    public void setMaxNumRuntimeFilters(int maxNumRuntimeFilters) {
+        this.maxNumRuntimeFilters = maxNumRuntimeFilters;
     }
 
 
@@ -585,7 +641,8 @@ public class SessionVariable implements Serializable, Writable {
             tResult.setMaxPushdownConditionsPerColumn(maxPushdownConditionsPerColumn);
         }
         tResult.setEnableSpilling(enableSpilling);
-        tResult.setEnableRuntimeFilterMode(enableRuntimeFilterMode);
+        tResult.setRuntimeFilterMode(runtimeFilterMode);
+        tResult.setRuntimeFilterWaitTimeMs(runtimeFilterWaitTimeMs);
         return tResult;
     }
 

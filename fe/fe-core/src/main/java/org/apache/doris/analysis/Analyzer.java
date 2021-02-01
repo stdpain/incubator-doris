@@ -544,6 +544,10 @@ public class Analyzer {
         return globalState.descTbl.getTupleDesc(id);
     }
 
+    public SlotDescriptor getSlotDesc(SlotId id) {
+        return globalState.descTbl.getSlotDesc(id);
+    }
+
     /**
      * Given a "table alias"."column alias", return the SlotDescriptor
      *
@@ -1793,5 +1797,44 @@ public class Analyzer {
                 }
             }
         }
+    }
+
+    public boolean hasValueTransfer(SlotId a, SlotId b) {
+//        SccCondensedGraph g = globalState_.valueTransferGraph;
+//        return a.equals(b) || (a.asInt() < g.numVertices() && b.asInt() < g.numVertices()
+//                && g.hasEdge(a.asInt(), b.asInt()));
+        return a.equals(b);
+    }
+
+    /**
+     * Returns sorted slot IDs with value transfers from 'srcSid'.
+     * Time complexity: O(V) where V = number of slots
+     */
+    public List<SlotId> getValueTransferTargets(SlotId srcSid) {
+//        SccCondensedGraph g = globalState_.valueTransferGraph;
+//        if (srcSid.asInt() >= g.numVertices()) return Collections.singletonList(srcSid);
+        List<SlotId> result = new ArrayList<>();
+        result.add(srcSid);
+//        for (IntIterator dstIt = g.dstIter(srcSid.asInt()); dstIt.hasNext(); dstIt.next()) {
+//            result.add(new SlotId(dstIt.peek()));
+//        }
+        // Unsorted result drastically changes the runtime filter assignment and results in
+        // worse plan.
+        // TODO: Investigate the call sites and remove this sort.
+//        Collections.sort(result);
+        return result;
+    }
+
+    /**
+     * Returns true if any of the given slot ids or their value-transfer targets belong
+     * to an outer-joined tuple.
+     */
+    public boolean hasOuterJoinedValueTransferTarget(List<SlotId> sids) {
+        for (SlotId srcSid: sids) {
+            for (SlotId dstSid: getValueTransferTargets(srcSid)) {
+                if (isOuterJoined(getTupleId(dstSid))) return true;
+            }
+        }
+        return false;
     }
 }

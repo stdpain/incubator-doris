@@ -292,6 +292,12 @@ public class HashJoinNode extends PlanNode {
             output.append(detailPrefix + "other predicates: ").append(
               getExplainString(conjuncts) + "\n");
         }
+        if (!runtimeFilters.isEmpty()) {
+            output.append(detailPrefix).append("runtime filters: ");
+            output.append(getRuntimeFilterExplainString(true, detailLevel));
+        }
+        output.append(detailPrefix).append(String.format(
+                "cardinality=%s", cardinality)).append("\n");
         return output.toString();
     }
 
