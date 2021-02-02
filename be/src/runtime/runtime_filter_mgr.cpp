@@ -168,7 +168,8 @@ Status RuntimeFilterMergeControllerEntity::merge(const PMergeFilterRequest* requ
     {
         std::lock_guard<std::mutex> guard(_filter_map_mutex);
         auto iter = _filter_map.find(std::to_string(request->filter_id()));
-        LOG(INFO) << "recv filter id:" << request->filter_id();
+        LOG(INFO) << "recv filter id:" << request->filter_id() << " "
+                  << request->ShortDebugString();
         if (iter == _filter_map.end()) {
             LOG(WARNING) << "unknown filter id:" << std::to_string(request->filter_id());
             return Status::InvalidArgument("unknown filter id");
@@ -185,9 +186,12 @@ Status RuntimeFilterMergeControllerEntity::merge(const PMergeFilterRequest* requ
         RETURN_IF_ERROR(cntVal->filter->merge_from(wrapper));
         cntVal->arrive_id.insert(UniqueId(request->fragment_id()).to_string());
         merged_size = cntVal->arrive_id.size();
+        LOG(INFO) << "merge size:" << merged_size << ":" << cntVal->producer_size;
+        if (merged_size < cntVal->producer_size) {
+            return Status::OK();
+        }
     }
 
-    LOG(INFO) << "merge size:" << merged_size << ":" << cntVal->producer_size;
     if (merged_size == cntVal->producer_size) {
         // prepare rpc context
         using PPublishFilterRpcContext =
@@ -228,7 +232,8 @@ Status RuntimeFilterMergeControllerEntity::merge(const PMergeFilterRequest* requ
                     targets[i].target_fragment_instance_addr);
             LOG(INFO) << "send filter " << rpc_contexts[i]->request.filter_id()
                       << " to:" << targets[i].target_fragment_instance_addr.hostname << ":"
-                      << targets[i].target_fragment_instance_addr.port;
+                      << targets[i].target_fragment_instance_addr.port
+                      << rpc_contexts[i]->request.ShortDebugString();
             if (stub == nullptr) {
                 rpc_contexts.pop_back();
             }
