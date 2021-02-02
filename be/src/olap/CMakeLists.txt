@@ -25,7 +25,7 @@ add_subdirectory(rowset)
 add_subdirectory(fs)
 add_subdirectory(memory)
 
-add_library(Olap SHARED
+add_library(Olap STATIC
     aggregate_func.cpp
     base_compaction.cpp
     base_tablet.cpp

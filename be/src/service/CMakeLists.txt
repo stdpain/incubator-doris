@@ -44,10 +44,3 @@ install(DIRECTORY DESTINATION ${OUTPUT_DIR}/lib/)
 
 install(TARGETS palo_be
     DESTINATION ${OUTPUT_DIR}/lib/)
-
-message(${DORIS_LINK_LIBS})
-
-install(TARGETS Agent Common Env Exec Exprs DorisGen Geo Gutil Webserver Olap Runtime DESTINATION ${OUTPUT_DIR}/lib/)
-
-SET(CMAKE_BUILD_WITH_INSTALL_RPATH TRUE) 
-#set(CMAKE_INSTALL_RPATH "${CMAKE_INSTALL_PREFIX}/be/lib")

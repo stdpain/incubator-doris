@@ -111,7 +111,7 @@ if (WITH_MYSQL)
         )
 endif()
 
-add_library(Util SHARED
+add_library(Util STATIC
     ${UTIL_FILES}
 )
 

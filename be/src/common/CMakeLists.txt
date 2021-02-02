@@ -18,7 +18,7 @@
 # where to put generated libraries
 set(LIBRARY_OUTPUT_PATH "${BUILD_DIR}/src/common")
 
-add_library(Common SHARED
+add_library(Common STATIC
   daemon.cpp
   status.cpp
   resource_tls.cpp
