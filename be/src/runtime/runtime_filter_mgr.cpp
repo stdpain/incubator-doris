@@ -120,12 +120,14 @@ Status RuntimeFilterMgr::get_merge_addr(TNetworkAddress* addr) {
 
 Status RuntimeFilterMergeControllerEntity::_init_with_desc(
         const TRuntimeFilterDesc* runtime_filter_desc,
-        const std::vector<doris::TRuntimeFilterTargetParams>* target_info) {
+        const std::vector<doris::TRuntimeFilterTargetParams>* target_info,
+        const int producer_size) {
     std::lock_guard<std::mutex> guard(_filter_map_mutex);
     std::shared_ptr<RuntimeFilterCntlVal> cntVal = std::make_shared<RuntimeFilterCntlVal>();
     // runtime_filter_desc and target will be released,
     // so we need to copy to cntVal
     // TODO: tracker should add a name
+    cntVal->producer_size = producer_size;
     cntVal->runtime_filter_desc = *runtime_filter_desc;
     cntVal->target_info = *target_info;
     cntVal->pool.reset(new ObjectPool());
@@ -149,7 +151,11 @@ Status RuntimeFilterMergeControllerEntity::init(UniqueId query_id,
         if (target_iter == runtime_filter_params.rid_to_target_param.end()) {
             return Status::InternalError("runtime filter params meet error");
         }
-        _init_with_desc(&filterid_to_desc.second, &target_iter->second);
+        const auto& build_iter = runtime_filter_params.runtime_filter_builder_num.find(filter_id);
+        if (build_iter == runtime_filter_params.runtime_filter_builder_num.end()) {
+            return Status::InternalError("runtime filter params meet error");
+        }
+        _init_with_desc(&filterid_to_desc.second, &target_iter->second, build_iter->second);
     }
     return Status::OK();
 }
@@ -172,17 +178,17 @@ Status RuntimeFilterMergeControllerEntity::merge(const PMergeFilterRequest* requ
         params.data = data;
         params.request = request;
         std::shared_ptr<MemTracker> tracker = iter->second->tracker;
-        ObjectPool pool;
+        ObjectPool* pool = iter->second->pool.get();
         RuntimePredicateWrapper* wrapper = nullptr;
-        RETURN_IF_ERROR(IRuntimeFilter::create_wrapper(&params, tracker.get(), &pool, &wrapper));
+        RETURN_IF_ERROR(IRuntimeFilter::create_wrapper(&params, tracker.get(), pool, &wrapper));
         // TODO: wrapper
         RETURN_IF_ERROR(cntVal->filter->merge_from(wrapper));
         cntVal->arrive_id.insert(UniqueId(request->fragment_id()).to_string());
         merged_size = cntVal->arrive_id.size();
     }
 
-    LOG(INFO) << "merge size:" << merged_size;
-    if (merged_size == cntVal->target_info.size()) {
+    LOG(INFO) << "merge size:" << merged_size << ":" << cntVal->producer_size;
+    if (merged_size == cntVal->producer_size) {
         // prepare rpc context
         using PPublishFilterRpcContext =
                 async_rpc_context<PPublishFilterRequest, PPublishFilterResponse>;
@@ -220,8 +226,9 @@ Status RuntimeFilterMergeControllerEntity::merge(const PMergeFilterRequest* requ
 
             PBackendService_Stub* stub = ExecEnv::GetInstance()->brpc_stub_cache()->get_stub(
                     targets[i].target_fragment_instance_addr);
-            LOG(INFO) << "send filter to:" << targets[i].target_fragment_instance_addr.hostname
-                      << ",endpoint size:" << targets[i].target_fragment_instance_addr.port;
+            LOG(INFO) << "send filter " << rpc_contexts[i]->request.filter_id()
+                      << " to:" << targets[i].target_fragment_instance_addr.hostname << ":"
+                      << targets[i].target_fragment_instance_addr.port;
             if (stub == nullptr) {
                 rpc_contexts.pop_back();
             }

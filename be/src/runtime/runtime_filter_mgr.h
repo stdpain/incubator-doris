@@ -117,10 +117,12 @@ public:
 
 private:
     Status _init_with_desc(const TRuntimeFilterDesc* runtime_filter_desc,
-                           const std::vector<doris::TRuntimeFilterTargetParams>* target_info);
+                           const std::vector<doris::TRuntimeFilterTargetParams>* target_info,
+                           const int producer_size);
 
     struct RuntimeFilterCntlVal {
         int64_t create_time;
+        int producer_size;
         TRuntimeFilterDesc runtime_filter_desc;
         std::vector<doris::TRuntimeFilterTargetParams> target_info;
         IRuntimeFilter* filter;

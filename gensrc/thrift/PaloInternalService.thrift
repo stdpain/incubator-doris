@@ -175,6 +175,9 @@ struct TRuntimeFilterParams {
 
   // Runtime filter ID to the runtime filter desc
   3: optional map<i32, PlanNodes.TRuntimeFilterDesc> rid_to_runtime_filter
+
+  // Number of Runtime filter producers
+  4: optional map<i32, i32> runtime_filter_builder_num
 }
 
 // Parameters for a single execution instance of a particular TPlanFragment

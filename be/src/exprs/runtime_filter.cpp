@@ -535,6 +535,7 @@ public:
             node.__set_opcode(TExprOpcode::RT_FILTER);
             node.__isset.vector_opcode = true;
             node.__set_vector_opcode(to_in_opcode(_column_return_type));
+            LOG(WARNING) << "CREATE BLOOMFILTER";
             auto bloom_pred = _pool->add(new BloomFilterPredicate(node));
             RETURN_IF_ERROR(bloom_pred->prepare(state, _bloomfilter_func.release()));
             bloom_pred->add_child(Expr::copy(_pool, prob_expr->root()));
@@ -560,12 +561,10 @@ public:
             return Status::InternalError("in filter should't apply in shuffle join");
         }
         case RuntimeFilterType::MINMAX_FILTER: {
-            _minmax_func->merge(wrapper->_minmax_func.get());
-            break;
+            return _minmax_func->merge(wrapper->_minmax_func.get());
         }
         case RuntimeFilterType::BLOOM_FILTER: {
-            _bloomfilter_func->merge(wrapper->_bloomfilter_func.get());
-            break;
+            return _bloomfilter_func->merge(wrapper->_bloomfilter_func.get());
         }
         default:
             DCHECK(false);
@@ -663,6 +662,16 @@ public:
             DateTimeValue max_val;
             min_val.from_date_str(min_val_ref.c_str(), min_val_ref.length());
             max_val.from_date_str(max_val_ref.c_str(), max_val_ref.length());
+            return _minmax_func->assign(&min_val, &max_val);
+        }
+        case TYPE_VARCHAR:
+        case TYPE_CHAR: {
+            auto& min_val_ref = minmax_filter->min_val().stringval();
+            auto& max_val_ref = minmax_filter->max_val().stringval();
+            auto min_val_ptr = _pool->add(new std::string(min_val_ref));
+            auto max_val_ptr = _pool->add(new std::string(max_val_ref));
+            StringValue min_val(const_cast<char*>(min_val_ptr->c_str()), min_val_ptr->length());
+            StringValue max_val(const_cast<char*>(max_val_ptr->c_str()), max_val_ptr->length());
             return _minmax_func->assign(&min_val, &max_val);
         }
         default:
@@ -989,11 +998,8 @@ void IRuntimeFilter::to_protobuf(PMinMaxFilter* filter) {
 }
 
 Status IRuntimeFilter::update_filter(const UpdateRuntimeFilterParams* param) {
-    std::shared_ptr<MemTracker> tracker = MemTracker::CreateTracker();
-    ObjectPool pool;
-    // TODO:
     RuntimePredicateWrapper* wrapper = nullptr;
-    RETURN_IF_ERROR(IRuntimeFilter::create_wrapper(param, tracker.get(), &pool, &wrapper));
+    RETURN_IF_ERROR(IRuntimeFilter::create_wrapper(param, _mem_tracker, _pool, &wrapper));
     RETURN_IF_ERROR(_wrapper->merge(wrapper));
     this->signal();
     return Status::OK();
@@ -1041,7 +1047,8 @@ Status RuntimeFilterSlots::init(RuntimeState* state, ObjectPool* pool, MemTracke
         DCHECK(runtime_filter->expr_order() >= 0);
         DCHECK(runtime_filter->expr_order() < _probe_expr_context.size());
         _runtime_filters[runtime_filter->expr_order()].push_back(runtime_filter);
-        LOG(WARNING) << "regist filter size:" << runtime_filter->expr_order() << ","
+        LOG(WARNING) << "init runtime filter order:" << runtime_filter->expr_order() << ","
+                     << (int)runtime_filter->type() << ","
                      << _runtime_filters[runtime_filter->expr_order()].size();
     }
     return Status::OK();
