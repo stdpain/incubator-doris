@@ -106,7 +106,7 @@ class RuntimeFilterMergeControllerEntity
         : public std::enable_shared_from_this<RuntimeFilterMergeControllerEntity> {
 public:
     RuntimeFilterMergeControllerEntity() : _query_id(0, 0) {}
-    ~RuntimeFilterMergeControllerEntity() = default;
+    ~RuntimeFilterMergeControllerEntity() { LOG(WARNING) << "entity desc" << _query_id; };
 
     Status init(UniqueId query_id, const TRuntimeFilterParams& runtime_filter_params);
 
@@ -154,7 +154,8 @@ public:
 
 private:
     std::mutex _controller_mutex;
-    using FilterControllerMap = std::map<std::string, RuntimeFilterMergeControllerEntity*>;
+    // using FilterControllerMap = std::map<std::string, RuntimeFilterMergeControllerEntity*>;
+    using FilterControllerMap = std::map<std::string, std::weak_ptr<RuntimeFilterMergeControllerEntity>>;
     // str(query-id) -> entity
     FilterControllerMap _filter_controller_map;
 };

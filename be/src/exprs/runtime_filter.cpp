@@ -92,7 +92,6 @@ public:
         if (other_minmax->_max > _max) {
             _max = other_minmax->_max;
         }
-        LOG(WARNING) << "merge val:" << _min << "," << _max;
         _empty = true;
         return Status::OK();
     }
@@ -106,7 +105,6 @@ public:
     virtual Status assign(void* min_data, void* max_data) {
         _min = *(T*)min_data;
         _max = *(T*)max_data;
-        LOG(WARNING) << "assign:" << _min << ":" << _max;
         return Status::OK();
     }
 

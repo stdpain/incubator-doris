@@ -187,6 +187,7 @@ Status RuntimeFilterMergeControllerEntity::merge(const PMergeFilterRequest* requ
         cntVal->arrive_id.insert(UniqueId(request->fragment_id()).to_string());
         merged_size = cntVal->arrive_id.size();
         LOG(INFO) << "merge size:" << merged_size << ":" << cntVal->producer_size;
+        DCHECK_LT(merged_size, cntVal->producer_size);
         if (merged_size < cntVal->producer_size) {
             return Status::OK();
         }
@@ -236,6 +237,7 @@ Status RuntimeFilterMergeControllerEntity::merge(const PMergeFilterRequest* requ
                       << rpc_contexts[i]->request.ShortDebugString();
             if (stub == nullptr) {
                 rpc_contexts.pop_back();
+                continue;
             }
             stub->apply_filter(&rpc_contexts[i]->cntl, &rpc_contexts[i]->request,
                                &rpc_contexts[i]->response, nullptr);
@@ -259,19 +261,17 @@ Status RuntimeFilterMergeController::add_entity(
     if (iter == _filter_controller_map.end()) {
         *handle = std::shared_ptr<RuntimeFilterMergeControllerEntity>(
                 new RuntimeFilterMergeControllerEntity(), entity_closer);
-        _filter_controller_map[query_id_str] = handle->get();
+        _filter_controller_map[query_id_str] = *handle;
+        const TRuntimeFilterParams& filter_params = params.params.runtime_filter_params;
+        if (params.params.__isset.runtime_filter_params) {
+            RETURN_IF_ERROR(handle->get()->init(query_id, filter_params));
+        }
     } else {
-        *handle = _filter_controller_map[query_id_str]->shared_from_this();
+        // *handle = _filter_controller_map[query_id_str]->shared_from_this();
+        *handle = _filter_controller_map[query_id_str].lock();
     }
     /// TODO(stdpain):
-    LOG(WARNING) << "add entity, query-id:" << query_id_str;
-
-    std::shared_ptr<RuntimeFilterMergeControllerEntity>& filter_merge_controller = *handle;
-
-    const TRuntimeFilterParams& filter_params = params.params.runtime_filter_params;
-    if (params.params.__isset.runtime_filter_params) {
-        RETURN_IF_ERROR(filter_merge_controller->init(query_id, filter_params));
-    }
+    LOG(WARNING) << "add entity, query-id:" << query_id_str << ":" << handle->use_count();
     return Status::OK();
 }
 
@@ -284,7 +284,10 @@ Status RuntimeFilterMergeController::acquire(
         LOG(WARNING) << "not found entity, query-id:" << query_id_str;
         return Status::InvalidArgument("not found entity");
     }
-    *handle = _filter_controller_map[query_id_str]->shared_from_this();
+    *handle = _filter_controller_map[query_id_str].lock();
+    if (*handle == nullptr) {
+        return Status::InvalidArgument("entity is closed");
+    }
     return Status::OK();
 }
 

@@ -55,17 +55,22 @@ Status IRuntimeFilter::push_to_remote(RuntimeState* state, const TNetworkAddress
     _rpc_context->cntl.set_timeout_ms(1000);
     _rpc_context->cid = _rpc_context->cntl.call_id();
 
-    RETURN_IF_ERROR(serialize(&_rpc_context->request, &data, &len));
-    LOG(WARNING) << "Producer:" << _rpc_context->request.ShortDebugString() << addr->hostname << ":"
-                 << addr->port;
-    if (len > 0) {
-        DCHECK(data != nullptr);
-        _rpc_context->cntl.request_attachment().append(data, len);
-    }
+    Status serialize_status = serialize(&_rpc_context->request, &data, &len);
+    if (serialize_status.ok()) {
+        LOG(WARNING) << "Producer:" << _rpc_context->request.ShortDebugString() << addr->hostname
+                     << ":" << addr->port;
+        if (len > 0) {
+            DCHECK(data != nullptr);
+            _rpc_context->cntl.request_attachment().append(data, len);
+        }
 
-    stub->merge_filter(&_rpc_context->cntl, &_rpc_context->request, &_rpc_context->response,
-                       brpc::DoNothing());
-    return Status::OK();
+        stub->merge_filter(&_rpc_context->cntl, &_rpc_context->request, &_rpc_context->response,
+                           brpc::DoNothing());
+    } else {
+        // we should reset context
+        _rpc_context.reset();
+    }
+    return serialize_status;
 }
 
 Status IRuntimeFilter::join_rpc() {
