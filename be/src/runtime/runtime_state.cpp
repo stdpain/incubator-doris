@@ -54,6 +54,7 @@ RuntimeState::RuntimeState(const TUniqueId& fragment_instance_id,
         : _fragment_mem_tracker(nullptr),
           _profile("Fragment " + print_id(fragment_instance_id)),
           _obj_pool(new ObjectPool()),
+          _runtime_filter_mgr(new RuntimeFilterMgr(TUniqueId(), this)),
           _data_stream_recvrs_pool(new ObjectPool()),
           _unreported_error_idx(0),
           _is_cancelled(false),
@@ -78,6 +79,7 @@ RuntimeState::RuntimeState(const TPlanFragmentExecParams& fragment_exec_params,
         : _fragment_mem_tracker(nullptr),
           _profile("Fragment " + print_id(fragment_exec_params.fragment_instance_id)),
           _obj_pool(new ObjectPool()),
+          _runtime_filter_mgr(new RuntimeFilterMgr(fragment_exec_params.query_id, this)),
           _data_stream_recvrs_pool(new ObjectPool()),
           _unreported_error_idx(0),
           _query_id(fragment_exec_params.query_id),
@@ -93,7 +95,6 @@ RuntimeState::RuntimeState(const TPlanFragmentExecParams& fragment_exec_params,
           _error_log_file_path(""),
           _error_log_file(nullptr),
           _instance_buffer_reservation(new ReservationTracker) {
-    _runtime_filter_mgr.reset(new RuntimeFilterMgr(_query_id, this));
     if (fragment_exec_params.__isset.runtime_filter_params) {
         _runtime_filter_mgr->set_runtime_filter_params(fragment_exec_params.runtime_filter_params);
     }
