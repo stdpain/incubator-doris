@@ -636,7 +636,7 @@ public:
                                                             min_string_val.length(), &result);
             DCHECK(result == StringParser::PARSE_SUCCESS);
             max_val = StringParser::string_to_int<int128_t>(max_string_val.c_str(),
-                                                            min_string_val.length(), &result);
+                                                            max_string_val.length(), &result);
             DCHECK(result == StringParser::PARSE_SUCCESS);
             return _minmax_func->assign(&min_val, &max_val);
         }
@@ -1028,9 +1028,6 @@ ShuffleRuntimeFilter::ShuffleRuntimeFilter(RuntimeState* state, MemTracker* trac
 
 Status ShuffleRuntimeFilter::init_with_desc(const TRuntimeFilterDesc* desc, int node_id) {
     RETURN_IF_ERROR(IRuntimeFilter::init_with_desc(desc, node_id));
-    if (_runtime_filter_type == RuntimeFilterType::IN_FILTER) {
-        return Status::InvalidArgument("shuffle join not support IN runtime filter");
-    }
     return Status::OK();
 }
 
