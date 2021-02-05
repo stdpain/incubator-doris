@@ -162,7 +162,7 @@ MinMaxFuncBase* MinMaxFuncBase::create_minmax_filter(PrimitiveType type) {
 
 // PrimitiveType->TExprNodeType
 // TODO: use constexpr if we use c++14
-static TExprNodeType::type get_expr_node_type(PrimitiveType type) {
+TExprNodeType::type get_expr_node_type(PrimitiveType type) {
     switch (type) {
     case TYPE_BOOLEAN:
         return TExprNodeType::BOOL_LITERAL;
@@ -307,7 +307,7 @@ PFilterType get_type(RuntimeFilterType type) {
     }
 }
 
-static TTypeDesc create_type_desc(PrimitiveType type) {
+TTypeDesc create_type_desc(PrimitiveType type) {
     TTypeDesc type_desc;
     std::vector<TTypeNode> node_type;
     node_type.emplace_back();
