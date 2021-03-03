@@ -49,6 +49,14 @@ using boost::mem_fn;
 
 namespace doris {
 
+class ThreadClosure : public google::protobuf::Closure {
+public:
+    void Run() { _cv.notify_one(); }
+    void wait(unique_lock<boost::mutex>& lock) { _cv.wait(lock); }
+
+private:
+    condition_variable _cv;
+};
 // Implements a blocking queue of row batches from one or more senders. One queue
 // is maintained per sender if _is_merging is true for the enclosing receiver, otherwise
 // rows from all senders are placed in the same queue.
@@ -72,6 +80,8 @@ public:
     // the queue is considered full and the call blocks until a batch is dequeued.
     void add_batch(const PRowBatch& pb_batch, int be_number, int64_t packet_seq,
                    ::google::protobuf::Closure** done);
+
+    void add_batch(RowBatch* batch, bool use_move);
 
     // Decrement the number of remaining senders for this queue and signal eos ("new data")
     // if the count drops to 0. The number of senders will be 1 for a merging
@@ -125,8 +135,8 @@ private:
 
     std::unordered_set<int> _sender_eos_set;          // sender_id
     std::unordered_map<int, int64_t> _packet_seq_map; // be_number => packet_seq
-
     std::deque<std::pair<google::protobuf::Closure*, MonotonicStopWatch>> _pending_closures;
+    std::unordered_map<std::thread::id, std::unique_ptr<ThreadClosure>> _local_closure;
 };
 
 DataStreamRecvr::SenderQueue::SenderQueue(DataStreamRecvr* parent_recvr, int num_senders,
@@ -256,6 +266,36 @@ void DataStreamRecvr::SenderQueue::add_batch(const PRowBatch& pb_batch, int be_n
     _data_arrival_cv.notify_one();
 }
 
+void DataStreamRecvr::SenderQueue::add_batch(RowBatch* batch, bool use_move) {
+    unique_lock<mutex> l(_lock);
+    if (_is_cancelled) {
+        return;
+    }
+    RowBatch* nbatch =
+            new RowBatch(_recvr->row_desc(), batch->capacity(), _recvr->mem_tracker().get());
+    if (use_move) {
+        nbatch->acquire_state(batch);
+    } else {
+        batch->deep_copy_to(nbatch);
+    }
+    int batch_size = nbatch->total_byte_size();
+    _batch_queue.emplace_back(batch_size, nbatch);
+    _data_arrival_cv.notify_one();
+    if (_recvr->exceeds_limit(batch_size)) {
+        std::thread::id tid = std::this_thread::get_id();
+        MonotonicStopWatch monotonicStopWatch;
+        monotonicStopWatch.start();
+        auto iter = _local_closure.find(tid);
+        if (iter == _local_closure.end()) {
+            _local_closure.emplace(tid, new ThreadClosure);
+            iter = _local_closure.find(tid);
+        }
+        _pending_closures.emplace_back(iter->second.get(), monotonicStopWatch);
+        iter->second->wait(l);
+    }
+    _recvr->_num_buffered_bytes += batch_size;
+}
+
 void DataStreamRecvr::SenderQueue::decrement_senders(int be_number) {
     lock_guard<mutex> l(_lock);
     if (_sender_eos_set.end() != _sender_eos_set.find(be_number)) {
@@ -294,6 +334,7 @@ void DataStreamRecvr::SenderQueue::cancel() {
             closure_pair.first->Run();
         }
         _pending_closures.clear();
+
     }
 }
 
@@ -309,6 +350,7 @@ void DataStreamRecvr::SenderQueue::close() {
             closure_pair.first->Run();
         }
         _pending_closures.clear();
+
     }
 
     // Delete any batches queued in _batch_queue
@@ -390,6 +432,11 @@ void DataStreamRecvr::add_batch(const PRowBatch& batch, int sender_id, int be_nu
     int use_sender_id = _is_merging ? sender_id : 0;
     // Add all batches to the same queue if _is_merging is false.
     _sender_queues[use_sender_id]->add_batch(batch, be_number, packet_seq, done);
+}
+
+void DataStreamRecvr::add_batch(RowBatch* batch, int sender_id, bool use_move) {
+    int use_sender_id = _is_merging ? sender_id : 0;
+    _sender_queues[use_sender_id]->add_batch(batch, use_move);
 }
 
 void DataStreamRecvr::remove_sender(int sender_id, int be_number) {
