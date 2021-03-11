@@ -375,6 +375,7 @@ Status HashJoinNode::open(RuntimeState* state) {
 Status HashJoinNode::get_next(RuntimeState* state, RowBatch* out_batch, bool* eos) {
     RETURN_IF_ERROR(exec_debug_action(TExecNodePhase::GETNEXT));
     RETURN_IF_CANCELLED(state);
+    RETURN_IF_LIMIT_EXCEEDED(state, "Hash join, while execute get_next");
     SCOPED_TIMER(_runtime_profile->total_time_counter());
 
     if (reached_limit()) {
